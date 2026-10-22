@@ -12,7 +12,10 @@ const components = require('./components');
 const catalog = require('./catalog');
 
 const STEAM_SETUP_URL = 'https://cdn.akamai.steamstatic.com/client/installer/SteamSetup.exe';
-const STEAM_ARGS = '-cef-disable-gpu -cef-disable-sandbox';
+// Steam's built-in browser (sign-in, store, library) needs its sandbox and GPU
+// acceleration turned off to load under Wine.
+const STEAM_ARGS = '-no-cef-sandbox -cef-disable-gpu -cef-disable-gpu-compositing';
+const OLD_STEAM_ARGS = ['-cef-disable-gpu -cef-disable-sandbox'];
 const SKIP_EXE = /(unins|uninstall|setup|install|update|crash|report|helper|redist|vcredist|dxsetup|dotnet|directx|notification|service|webhelper|7z|^winver|^cef)/i;
 const INSTALLER = /(setup|install|^inst[_-]|_inst\b)/i;
 const SKIP_DIR = /^(windows|common files|internet explorer|windows media player|windows nt|windowspowershell|microsoft\.net)$/i;
@@ -256,7 +259,7 @@ function launch({ bottleId, file, args = '', appId = null, name }) {
   const before = installer ? snapshot(b.id) : null;
   const appEntry = appId && store.get().apps.find((x) => x.id === appId);
   const child = spawn(bin, [...argsFor(file), ...splitArgs(args)], { env: wineEnv(b, appEntry?.hud ? { MTL_HUD_ENABLED: '1' } : {}), cwd: path.dirname(file) });
-  const entry = { runId, appId, bottleId, name: label, started: Date.now(), pid: child.pid };
+  const entry = { runId, appId, bottleId, name: label, started: Date.now(), pid: child.pid, exe: file };
   running.set(runId, { ...entry, child });
   pipe(child, label);
   log(`▶ Launching ${label} in “${b.name}”`);
@@ -611,9 +614,74 @@ function steamStatus() {
   const s = store.get();
   const b = s.bottles.find((x) => x.steam);
   const exe = b && findSteam(b);
-  let appEntry = exe && s.apps.find((a) => a.exe === exe);
-  if (exe && !appEntry) appEntry = addApp({ bottleId: b.id, exe, name: 'Steam', args: STEAM_ARGS });
+  const appEntry = exe && s.apps.find((a) => a.exe === exe);
   return { bottleId: b?.id || null, installed: !!exe, appId: appEntry?.id || null };
+}
+
+// Puts an installed Steam back in the Library after it was removed from it.
+function readdSteam() {
+  const st = steamStatus();
+  if (!st.installed) throw new Error('Steam isn’t installed');
+  if (st.appId) return st.appId;
+  return addApp({ bottleId: st.bottleId, exe: findSteam(bottle(st.bottleId)), name: 'Steam', args: STEAM_ARGS }).id;
+}
+
+// Updates Steam entries made by older versions of Umbra to the current launch flags.
+function migrateSteamArgs() {
+  let changed = false;
+  for (const a of store.get().apps) {
+    if (/steam\.exe$/i.test(a.exe) && OLD_STEAM_ARGS.includes(a.args)) { a.args = STEAM_ARGS; changed = true; }
+  }
+  if (changed) store.save();
+}
+
+// Common fix for Steam that can't connect or update: stop it, clear its
+// downloaded client package and web cache so it re-downloads cleanly, then relaunch.
+async function repairSteam() {
+  const st = steamStatus();
+  if (!st.installed) throw new Error('Steam isn’t installed');
+  const b = bottle(st.bottleId);
+  await kill(b.id).catch(() => {});
+  const root = path.dirname(findSteam(b));
+  for (const d of ['package', 'appcache/httpcache', 'config/htmlcache']) fs.rmSync(path.join(root, d), { recursive: true, force: true });
+  if (b.winver !== 'win10' && b.winver !== 'win11') await setWinver(b.id, 'win10');
+  const id = readdSteam();
+  const a = store.get().apps.find((x) => x.id === id);
+  if (OLD_STEAM_ARGS.includes(a.args) || !a.args) a.args = STEAM_ARGS;
+  store.save();
+  log('Steam repaired: cleared its package and web caches. Relaunching — it will re-download its update.');
+  return launch({ bottleId: b.id, file: a.exe, args: a.args, appId: a.id, name: 'Steam' });
+}
+
+// The folder an app was installed into, if Umbra can safely remove it.
+function uninstallTarget(exe) {
+  const m = exe.match(/^(.*[\\/]steamapps[\\/]common[\\/][^\\/]+)[\\/]/i)
+    || exe.match(/^(.*[\\/]drive_c[\\/](?:Program Files(?: \(x86\))?|Games|GOG Games)[\\/][^\\/]+)[\\/]/i)
+    || exe.match(/^(.*[\\/]AppData[\\/]Local[\\/]Programs[\\/][^\\/]+)[\\/]/i);
+  return m ? m[1] : null;
+}
+
+function uninstallInfo(id) {
+  const a = store.get().apps.find((x) => x.id === id);
+  if (!a) throw new Error('App not found');
+  const dir = a.category === 'tool' ? null : uninstallTarget(a.exe);
+  const inside = dir ? store.get().apps.filter((x) => x.id !== a.id && x.exe.startsWith(dir + path.sep)) : [];
+  return { app: a, dir, alsoRemoves: inside.map((x) => x.name) };
+}
+
+// Deletes an installed program (and any Library entries inside its folder).
+async function uninstallApp(id) {
+  const { app: a, dir } = uninstallInfo(id);
+  if (!dir) throw new Error(`${a.name} can’t be uninstalled automatically. You can still remove it from your Library.`);
+  for (const r of running.values()) if (r.appId === a.id || (r.exe || '').startsWith(dir)) r.child.kill('SIGKILL');
+  if (/steam\.exe$/i.test(a.exe)) await kill(a.bottleId).catch(() => {});
+  fs.rmSync(dir, { recursive: true, force: true });
+  const s = store.get();
+  const gone = s.apps.filter((x) => x.id === a.id || x.exe.startsWith(dir + path.sep));
+  s.apps = s.apps.filter((x) => !gone.includes(x));
+  store.save();
+  log(`Uninstalled ${a.name} (${dir})`);
+  return gone.map((x) => x.name);
 }
 
 async function installSteam(onProgress) {
@@ -640,5 +708,5 @@ async function installSteam(onProgress) {
 
 module.exports = {
   init, setEngine, getEngine, createBottle, deleteBottle, setWinver, setRetina, launch, runningList, stop, kill,
-  tool, driveC, scan, isInstaller, mainBottle, addWindowsTools, storeStatus, installFromStore, fixCommonProblems, createMacLauncher, installComponent, runWinetricks, setDxvk, addApp, refreshIcons, importSteamGames, updateApp, removeApp, runApp, steamStatus, installSteam, prefixOf, bottle,
+  tool, driveC, scan, isInstaller, readdSteam, migrateSteamArgs, repairSteam, uninstallInfo, uninstallApp, mainBottle, addWindowsTools, storeStatus, installFromStore, fixCommonProblems, createMacLauncher, installComponent, runWinetricks, setDxvk, addApp, refreshIcons, importSteamGames, updateApp, removeApp, runApp, steamStatus, installSteam, prefixOf, bottle,
 };

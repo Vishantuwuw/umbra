@@ -154,6 +154,7 @@ async function boot() {
   await sleep(200);
   splashStep(74, `Loading ${store.get().bottles.length} bottle(s) and ${store.get().apps.length} app(s)`);
   runtime.refreshIcons();
+  runtime.migrateSteamArgs();
   createMain();
   await new Promise((r) => main.once('ready-to-show', r));
   splashStep(90, 'Preparing interface');
@@ -360,6 +361,19 @@ handle('bottle:scan', (id) => runtime.scan(id));
 handle('app:add', (opts) => runtime.addApp(opts));
 handle('app:update', (id, patch) => runtime.updateApp(id, patch));
 handle('app:remove', (id) => runtime.removeApp(id));
+handle('app:uninstall', async (id) => {
+  const { app: a, dir, alsoRemoves } = runtime.uninstallInfo(id);
+  if (!dir) throw new Error(`${a.name} can’t be uninstalled automatically. You can still remove it from your Library.`);
+  const r = await dialog.showMessageBox(main, {
+    type: 'warning', buttons: ['Uninstall', 'Cancel'], defaultId: 1, cancelId: 1,
+    message: `Uninstall ${a.name}?`,
+    detail: `This deletes ${a.name} from your Mac${alsoRemoves.length ? `, along with ${alsoRemoves.join(', ')}` : ''}. Saved games stored inside its folder are deleted too.`,
+  });
+  if (r.response !== 0) return null;
+  return runtime.uninstallApp(id);
+});
+handle('steam:readd', () => runtime.readdSteam());
+handle('steam:repair', () => runtime.repairSteam());
 handle('app:run', (id) => runtime.runApp(id));
 handle('app:reveal', (id) => {
   const a = store.get().apps.find((x) => x.id === id);

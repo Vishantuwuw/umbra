@@ -25,7 +25,11 @@ input, select { font: inherit; color: var(--text); }
 ::-webkit-scrollbar-thumb { background: rgba(255,255,255,.08); border-radius: 10px; border: 3px solid transparent; background-clip: padding-box; }
 svg { width: 16px; height: 16px; stroke: currentColor; fill: none; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; flex: none; }
 
-.app { display: grid; grid-template-columns: 236px 1fr; height: 100vh; }
+.app { display: grid; grid-template-columns: 236px 1fr; grid-template-rows: 100vh; height: 100vh; }
+/* Flex/grid children default to min-height:auto, which lets them grow past the
+   window instead of scrolling. */
+.app > *, .view { min-height: 0; }
+.side { overflow-y: auto; }
 
 /* Sidebar */
 .side { position: relative; display: flex; flex-direction: column; padding: 0 14px 14px; border-right: 1px solid var(--line);
@@ -394,3 +398,4 @@ select.input { appearance: none; background-image: linear-gradient(45deg, transp
 .eclipse .ring { position: absolute; inset: -2px; border-radius: 50%; background: conic-gradient(from 90deg, rgba(255,255,255,.9), rgba(167,139,250,.6), transparent 35%, transparent 65%, rgba(34,211,238,.7), rgba(255,255,255,.9)); animation: spin 2.2s linear infinite reverse; }
 .eclipse .moon { position: absolute; inset: 1px; border-radius: 50%; background: radial-gradient(circle at 40% 35%, #111 0%, #000 70%); }
 .wz-card.still { animation: none; }
+.wizard { overflow-y: auto; justify-content: safe center; }

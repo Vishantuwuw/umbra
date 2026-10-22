@@ -98,6 +98,28 @@ app.whenReady().then(async () => {
     try { await fn(); console.log(`PASS: ${label}`); } catch (e) { console.log(`WARN: ${label} failed: ${e.message}`); }
   }
 
+  // Steam: install it, launch it and report what its own logs say (diagnostic, not fatal).
+  if (process.env.STEAM_TEST !== '0') {
+    try {
+      const steamApp = await runtime.installSteam(progress());
+      console.log('PASS: Steam installed ->', steamApp.exe, 'args:', steamApp.args);
+      const sr = runtime.runApp(steamApp.id);
+      for (let i = 1; i <= 4; i++) {
+        await sleep(30000);
+        try { execFileSync('/usr/sbin/screencapture', ['-x', path.join(shots, `mac-steam-${i * 30}s.png`)]); } catch {}
+      }
+      console.log('Steam still running after 2 min:', runtime.runningList().some((r) => r.runId === sr.runId));
+      const logs = path.join(path.dirname(steamApp.exe), 'logs');
+      for (const f of ['bootstrap_log.txt', 'connection_log.txt', 'webhelper.txt', 'cef_log.txt', 'stderr.txt']) {
+        try {
+          const txt = require('fs').readFileSync(path.join(logs, f), 'utf8').trim().split('\n').slice(-25).join('\n');
+          console.log(`----- Steam ${f} (last lines) -----\n${txt}`);
+        } catch {}
+      }
+      await runtime.kill(b.id);
+    } catch (e) { console.log(`WARN: Steam test failed: ${e.message}`); }
+  }
+
   store.flush();
   console.log(alive ? `PASS: installed Hello App is running under Wine on ${process.platform}` : 'FAIL: Hello App exited early');
   app.exit(alive ? 0 : 1);

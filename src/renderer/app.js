@@ -170,6 +170,8 @@ function engineBanner() {
 }
 
 // ---------- Library ----------
+const canUninstall = (a) => a.category !== 'tool' && /[\\/](Program Files( \(x86\))?|Games|GOG Games|steamapps[\\/]common|AppData[\\/]Local[\\/]Programs)[\\/]/i.test(a.exe);
+const isSteam = (a) => /[\\/]steam\.exe$/i.test(a.exe);
 const appSub = (a) => `${S.bottles.length > 1 ? `${esc(bottleName(a.bottleId))} · ` : ''}${fmtTime(a.playtime)}`;
 
 function tile(a) {
@@ -280,6 +282,9 @@ const COMPAT = { good: ['Works great', 'var(--green)'], ok: ['Works', 'var(--cya
 function storeButton(x) {
   const t = S.tasks.find((k) => k.id === `store:${x.id}` || (x.id === 'steam' && k.id === 'steam'));
   if (t) return `<button class="btn" disabled>Installing… ${Math.round((taskPct[t.id]?.pct ?? t.pct ?? 0) * 100)}%</button>`;
+  if (x.id === 'steam' && S.steam.installed && !x.appId) {
+    return `<button class="btn primary" data-act="steam-readd">${icon('plus')}Add Steam to Library</button>`;
+  }
   if (x.appId) {
     return isRunning(x.appId)
       ? `<button class="btn" data-act="stop-app" data-id="${x.appId}">${icon('stop')}Stop</button>`
@@ -301,10 +306,10 @@ function viewStore() {
     <div class="steam-hero">
       <div class="orb"></div>
       <div class="kicker" style="color:var(--cyan)">Recommended</div>
-      <h2>${steam.appId ? 'Steam is installed.' : 'Play your Steam games on your Mac.'}</h2>
-      <p>${steam.appId ? 'Open Steam, sign in and install games as usual. When Steam closes, your installed games show up in the Library with their cover art.'
+      <h2>${S.steam.installed ? 'Steam is installed.' : 'Play your Steam games on your Mac.'}</h2>
+      <p>${S.steam.installed ? 'Open Steam, sign in and install games as usual. When Steam closes, your installed games show up in the Library with their cover art.'
         : 'Installs Valve’s official Steam for Windows. No Windows license needed.'}</p>
-      <div class="row" style="display:flex;gap:10px">${storeButton(steam)}${steam.appId ? ` <button class="btn" data-act="steam-import">${icon('download')}Import my Steam games</button>` : ''}</div>
+      <div class="row" style="display:flex;gap:10px;flex-wrap:wrap">${storeButton(steam)}${S.steam.installed ? ` <button class="btn" data-act="steam-import">${icon('download')}Import my Steam games</button> <button class="btn" data-act="steam-repair">${icon('refresh')}Repair Steam</button>` : ''}</div>
     </div>
     <div class="section-h"><h2>Game Stores</h2></div>
     <div class="store-grid">${rest.filter((x) => x.kind === 'Game store').map(card).join('')}</div>
@@ -611,10 +616,12 @@ function appSettingsModal(id) {
     <details class="more-opts"><summary>Launch options</summary>
       <div class="field"><input class="input" id="s-args" value="${esc(a.args)}" placeholder="e.g. -windowed -dx11"></div>
     </details>
+    ${isSteam(a) ? `<div class="fix-box"><div><b>Steam can’t connect or won’t update?</b><span>Clears Steam’s download and web caches and restarts it. Your games stay installed.</span></div>
+      <button class="btn" id="s-repair">${icon('refresh')}Repair Steam</button></div>` : ''}
     <div class="fix-box"><div><b>Won’t start or crashes?</b><span>${missing ? 'Installs Visual C++ and DirectX, which most games need.' : 'Visual C++ and DirectX are already installed.'}</span></div>
       <button class="btn" id="s-fix" ${fixing || !missing ? 'disabled' : ''}>${icon('bolt')}${fixing ? 'Fixing…' : 'Fix Common Problems'}</button></div>
     <div class="modal-actions spread">
-      <div><button class="btn ghost danger" id="s-remove">${icon('trash')}Remove</button></div>
+      <div><button class="btn ghost" id="s-remove">Remove from Library</button>${canUninstall(a) ? `<button class="btn ghost danger" id="s-uninstall">${icon('trash')}Uninstall</button>` : ''}</div>
       <div><button class="btn ghost" data-close>Cancel</button><button class="btn primary" id="s-save">Save</button></div>
     </div>`,
   (el, close) => {
@@ -622,6 +629,10 @@ function appSettingsModal(id) {
     el.querySelectorAll('[data-sw]').forEach((btn) => btn.onclick = () => { state[btn.dataset.sw] = !state[btn.dataset.sw]; btn.classList.toggle('on'); });
     $('#s-fix', el).onclick = async () => { close(); await call('app:fix', a.id); toast(`${a.name}: Visual C++ and DirectX installed`); };
     $('#s-remove', el).onclick = async () => { close(); await call('app:remove', a.id); toast(`Removed ${a.name} from your Library`); };
+    const rp = $('#s-repair', el);
+    if (rp) rp.onclick = () => { close(); repairSteam(); };
+    const un = $('#s-uninstall', el);
+    if (un) un.onclick = () => { close(); uninstall(a); };
     $('#s-save', el).onclick = async () => {
       close();
       await call('app:update', a.id, { name: $('#s-name', el).value.trim() || a.name, args: $('#s-args', el).value, hud: state.hud });
@@ -723,6 +734,16 @@ async function wizardAction(a) {
   paintWizard();
 }
 
+async function uninstall(a) {
+  const gone = await call('app:uninstall', a.id);
+  if (gone) toast(`Uninstalled ${gone.join(', ')}`);
+}
+
+async function repairSteam() {
+  await call('steam:repair');
+  toast('Repairing Steam… it will re-download its update and open. This can take a few minutes.');
+}
+
 function addMenu(anchor) {
   menu(anchor, [
     { icon: 'file', label: 'Run or install a Windows program…', run: () => pickAndRun() },
@@ -759,6 +780,8 @@ const actions = {
   'add-menu': (el) => addMenu(el),
   'app-settings': (el) => appSettingsModal(el.dataset.id),
   'open-wizard': () => openWizard(),
+  'steam-readd': async () => { await call('steam:readd'); toast('Steam is back in your Library'); },
+  'steam-repair': () => repairSteam(),
   'store-install': async (el) => {
     const item = S.store.find((x) => x.id === el.dataset.id);
     await call('store:install', item.id);
@@ -784,7 +807,9 @@ const actions = {
       { icon: 'folder', label: 'Show in Finder', run: () => call('app:reveal', a.id) },
       { icon: 'window', label: 'Add to Mac Applications', run: async () => { await call('app:launcher', a.id); toast(`${a.name} is now in ~/Applications/Umbra — find it in Launchpad or Spotlight`); } },
       '-',
-      { icon: 'trash', label: 'Remove from Library', danger: true, run: () => call('app:remove', a.id) },
+      ...(isSteam(a) ? [{ icon: 'refresh', label: 'Repair Steam (connection problems)', run: () => repairSteam() }] : []),
+      { icon: 'trash', label: 'Remove from Library', run: () => call('app:remove', a.id) },
+      ...(canUninstall(a) ? [{ icon: 'trash', label: `Uninstall ${a.name}…`, danger: true, run: () => uninstall(a) }] : []),
     ]);
   },
   'bottle-menu': (el) => {
