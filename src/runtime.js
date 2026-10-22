@@ -351,7 +351,7 @@ function launch({ bottleId, file, args = '', appId = null, name, steamAttempt = 
 // on "Cleaning up…" after it says it is relaunching Steam. Watch its log until the real
 // client starts, and restart Steam (at most three times) when it gets stuck. Steam's
 // updater also sometimes exits after "launching Steam…" without the new client starting.
-const STEAM_STALL_MS = 4 * 60 * 1000;
+const STEAM_STALL_MS = 12 * 60 * 1000;
 const STEAM_RELAUNCH_MS = 45 * 1000;
 
 function steamProgress(logs, from, since) {
@@ -362,7 +362,11 @@ function steamProgress(logs, from, since) {
   const handoff = text.lastIndexOf('Update complete, launching Steam');
   // After a handoff the relaunched updater logs a fresh "Startup" line.
   const handedOff = handoff >= 0 && !/Startup/.test(text.slice(handoff));
-  return { size: from + Buffer.byteLength(text), clientUp, handedOff };
+  // Under Wine, Steam often writes its log only when it exits, so count bytes landing
+  // in its package folder (the update downloading) as progress too.
+  let pkg = 0;
+  try { for (const f of fs.readdirSync(path.join(logs, '..', 'package'))) pkg += fs.statSync(path.join(logs, '..', 'package', f)).size; } catch {}
+  return { size: from + Buffer.byteLength(text) + pkg, clientUp, handedOff };
 }
 
 function steamLastLine(logs) {
@@ -399,7 +403,8 @@ function watchSteam(runId, opts, attempt) {
     const stalled = Date.now() - lastGrowth > (alive ? STEAM_STALL_MS : STEAM_RELAUNCH_MS);
     if (!reopenStuck && !stalled) return;
     clearInterval(timer);
-    if (attempt >= 3) {
+    // Relaunching after a finished update is harmless, so it gets a few extra tries.
+    if (reopenStuck ? attempt >= 5 : attempt >= 3) {
       const last = steamLastLine(logs);
       log(`Steam couldn’t start${last ? ` (its log ends with: ${last})` : ''}. Try Repair Steam from its settings.`, 'warn');
       emit('steam-failed', { lastLine: last });
@@ -408,7 +413,8 @@ function watchSteam(runId, opts, attempt) {
     // Closing before the client opens usually means broken client files ("Failed to load
     // steamui.dll", often from an interrupted update); a restart alone brings the same
     // files back, so make Steam reinstall them.
-    const reinstall = !reopenStuck;
+    // Only when steam.exe itself died: a slow but running Steam is left to finish.
+    const reinstall = !reopenStuck && !alive;
     log(reopenStuck ? 'Steam finished updating but didn’t reopen. Restarting it…'
       : reinstall ? 'Steam didn’t open. Reinstalling its client files and starting it again…'
         : 'Restarting Steam…', 'warn');
