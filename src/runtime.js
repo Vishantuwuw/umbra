@@ -309,7 +309,9 @@ function launch({ bottleId, file, args = '', appId = null, name, steamAttempt = 
     }
     log(`■ ${label} exited (code ${code ?? '?'}) after ${secs}s`, code ? 'warn' : 'info');
     emit('running');
-    if (code && !stopped && !installer && secs < 6) emit('crashed', { name: label, code });
+    // steam.exe often exits early while Steam keeps starting; watchSteam reports real failures.
+    const isSteam = /^steam\.exe$/i.test(path.basename(file));
+    if (code && !stopped && !installer && !isSteam && secs < 6) emit('crashed', { name: label, code });
     if (installer) trackInstall(b, before, label).catch((e) => log(`Could not detect installed apps: ${e.message}`, 'warn'));
     if (/^steam\.exe$/i.test(path.basename(file))) {
       const added = importSteamGames(b.id);
@@ -318,7 +320,9 @@ function launch({ bottleId, file, args = '', appId = null, name, steamAttempt = 
   };
   child.on('exit', done);
   child.on('error', (e) => { log(`${label}: ${e.message}`, 'error'); done(-1); });
-  if (/^steam\.exe$/i.test(path.basename(file))) watchSteam(runId, { bottleId, file, args, appId, name }, steamAttempt);
+  // A second click while Steam is already open just hands off to it; nothing to watch then.
+  const steamOpen = [...running.values()].some((r) => r.runId !== runId && r.bottleId === bottleId && /steam\.exe$/i.test(r.exe || ''));
+  if (/^steam\.exe$/i.test(path.basename(file)) && !steamOpen) watchSteam(runId, { bottleId, file, args, appId, name }, steamAttempt);
   emit('running');
   return entry;
 }
@@ -334,11 +338,18 @@ function steamProgress(logs, from, since) {
   let text = '';
   try { text = fs.readFileSync(path.join(logs, 'bootstrap_log.txt')).subarray(from).toString('utf8'); } catch {}
   const mtime = (f) => { try { return fs.statSync(path.join(logs, f)).mtimeMs; } catch { return 0; } };
-  const clientUp = ['connection_log.txt', 'webhelper.txt', 'cef_log.txt'].some((f) => mtime(f) > since);
+  const clientUp = ['connection_log.txt', 'webhelper.txt', 'cef_log.txt', 'console_log.txt'].some((f) => mtime(f) > since);
   const handoff = text.lastIndexOf('Update complete, launching Steam');
   // After a handoff the relaunched updater logs a fresh "Startup" line.
   const handedOff = handoff >= 0 && !/Startup/.test(text.slice(handoff));
   return { size: from + Buffer.byteLength(text), clientUp, handedOff };
+}
+
+function steamLastLine(logs) {
+  try {
+    const lines = fs.readFileSync(path.join(logs, 'bootstrap_log.txt'), 'utf8').trim().split('\n');
+    return lines[lines.length - 1].replace(/^\[[^\]]*\]\s*/, '').slice(0, 160);
+  } catch { return ''; }
 }
 
 function watchSteam(runId, opts, attempt) {
@@ -354,19 +365,21 @@ function watchSteam(runId, opts, attempt) {
     const p = steamProgress(logs, from, t0);
     if (p.clientUp) return clearInterval(timer);
     const alive = running.has(runId);
-    // The updater exiting is normal only when it handed off to the real client.
-    if (!alive && !p.handedOff) return clearInterval(timer);
     if (p.size !== lastSize) { lastSize = p.size; lastGrowth = Date.now(); }
     handedOffAt = p.handedOff ? handedOffAt || Date.now() : 0;
     const reopenStuck = handedOffAt && Date.now() - handedOffAt > STEAM_RELAUNCH_MS;
-    const stalled = alive && Date.now() - lastGrowth > STEAM_STALL_MS;
+    // Once the first steam.exe has exited, a quiet minute means nothing took over from it.
+    const stalled = Date.now() - lastGrowth > (alive ? STEAM_STALL_MS : STEAM_RELAUNCH_MS);
     if (!reopenStuck && !stalled) return;
     clearInterval(timer);
     if (attempt >= 3) {
-      log('Steam still looks stuck. Try Repair Steam from its settings, or quit and reopen it.', 'warn');
+      const last = steamLastLine(logs);
+      log(`Steam couldn’t start${last ? ` (its log ends with: ${last})` : ''}. Try Repair Steam from its settings.`, 'warn');
+      emit('steam-failed', { lastLine: last });
       return;
     }
-    log(reopenStuck ? 'Steam finished updating but didn’t reopen. Restarting it…' : 'Steam’s update stopped making progress. Restarting it…', 'warn');
+    log(reopenStuck ? 'Steam finished updating but didn’t reopen. Restarting it…'
+      : alive ? 'Steam’s update stopped making progress. Restarting it…' : 'Steam closed before it opened. Starting it again…', 'warn');
     kill(opts.bottleId)
       .then(() => new Promise((r) => setTimeout(r, 2000)))
       .then(() => launch({ ...opts, steamAttempt: attempt + 1 }))

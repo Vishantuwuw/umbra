@@ -1000,6 +1000,9 @@ api.on('menu', (name) => {
 api.on('crashed', ({ name, code }) => {
   toast(`${name} closed right away (code ${code}). It may need Visual C++ or .NET: open Bottles → Components. The Console has details.`, 'error');
 });
+api.on('steam-failed', ({ lastLine }) => {
+  toast(`Steam couldn’t start after 3 tries${lastLine ? ` (“${lastLine}”)` : ''}. Open Steam’s settings and choose Repair Steam, or check the Console.`, 'error');
+});
 api.on('open-files', (files) => { const f = files.find((p) => RUNNABLE.test(p)); if (f) runFileFlow(f); });
 
 (async () => {

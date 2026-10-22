@@ -105,8 +105,8 @@ function onRuntimeEvent(type, payload) {
     send('log', payload);
   } else if (type === 'running') {
     pushState();
-  } else if (type === 'crashed') {
-    send('crashed', payload);
+  } else if (type === 'crashed' || type === 'steam-failed') {
+    send(type, payload);
   } else if (type === 'installed') {
     pushState();
     send('installed', payload);
