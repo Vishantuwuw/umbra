@@ -134,7 +134,7 @@ app.whenReady().then(async () => {
       const pollFails = (cef.match(/Failed to poll auth session/g) || []).length;
       const netFails = (cef.match(/ERR_FAILED/g) || []).length;
       const connected = /\[Connected/.test(read('connection_log.txt'));
-      console.log(`STEAM SUMMARY: engine=${eng.version} connected=${connected} signInPollFailures=${pollFails} cefNetErrors=${netFails} -> ${connected && !pollFails ? 'SIGN-IN OK' : 'SIGN-IN BROKEN'}`);
+      console.log(`STEAM SUMMARY: engine=${eng.version} cefWrapped=${/--single-process/.test(read('webhelper.txt'))} connected=${connected} signInPollFailures=${pollFails} cefNetErrors=${netFails} -> ${connected && !pollFails ? 'SIGN-IN OK' : 'SIGN-IN BROKEN'}`);
       await runtime.kill(b.id);
     } catch (e) { console.log(`WARN: Steam test failed: ${e.message}`); }
   }

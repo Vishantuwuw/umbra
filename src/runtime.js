@@ -15,8 +15,10 @@ const STEAM_SETUP_URL = 'https://cdn.akamai.steamstatic.com/client/installer/Ste
 const STEAM_CLIENT_CDN = 'https://cdn.steamstatic.com/client/';
 // Steam's built-in browser (sign-in, store, library) needs its sandbox and GPU
 // acceleration turned off to load under Wine.
-const STEAM_ARGS = '-no-cef-sandbox -cef-disable-gpu -cef-disable-gpu-compositing';
-const OLD_STEAM_ARGS = ['-cef-disable-gpu -cef-disable-sandbox'];
+// -noverifyfiles keeps Steam from restoring its own steamwebhelper.exe over Umbra's
+// wrapper (see deployCefWrapper) when it checks its files at startup.
+const STEAM_ARGS = '-noverifyfiles -no-cef-sandbox -cef-disable-gpu -cef-disable-gpu-compositing';
+const OLD_STEAM_ARGS = ['-cef-disable-gpu -cef-disable-sandbox', '-no-cef-sandbox -cef-disable-gpu -cef-disable-gpu-compositing'];
 const SKIP_EXE = /(unins|uninstall|setup|install|update|crash|report|helper|redist|vcredist|dxsetup|dotnet|directx|notification|service|webhelper|^7z\.exe$|^winver|^cef)/i;
 const INSTALLER = /(setup|install|^inst[_-]|_inst\b)/i;
 const SKIP_DIR = /^(windows|common files|internet explorer|windows media player|windows nt|windowspowershell|microsoft\.net)$/i;
@@ -306,6 +308,9 @@ function launch({ bottleId, file, args = '', appId = null, name, steamAttempt = 
   const installer = !appId && isInstaller(file);
   const before = installer ? snapshot(b.id) : null;
   const appEntry = appId && store.get().apps.find((x) => x.id === appId);
+  const isSteamExe = /^steam\.exe$/i.test(path.basename(file));
+  // Steam needs -noverifyfiles for its browser fix; Library entries made before it get it too.
+  if (isSteamExe && !/-noverifyfiles/i.test(args)) args = `-noverifyfiles ${args}`.trim();
   const child = spawn(bin, [...argsFor(file), ...splitArgs(args)], { env: wineEnv(b, appEntry?.hud ? { MTL_HUD_ENABLED: '1' } : {}), cwd: path.dirname(file) });
   const entry = { runId, appId, bottleId, name: label, started: Date.now(), pid: child.pid, exe: file };
   running.set(runId, { ...entry, child });
@@ -342,7 +347,8 @@ function launch({ bottleId, file, args = '', appId = null, name, steamAttempt = 
   child.on('error', (e) => { log(`${label}: ${e.message}`, 'error'); done(-1); });
   // A second click while Steam is already open just hands off to it; nothing to watch then.
   const steamOpen = [...running.values()].some((r) => r.runId !== runId && r.bottleId === bottleId && /steam\.exe$/i.test(r.exe || ''));
-  if (/^steam\.exe$/i.test(path.basename(file)) && !steamOpen) watchSteam(runId, { bottleId, file, args, appId, name }, steamAttempt);
+  const wrapped = isSteamExe && deployCefWrapper(path.dirname(file));
+  if (isSteamExe && !steamOpen) watchSteam(runId, { bottleId, file, args, appId, name, wrapped }, steamAttempt);
   if (/^steam\.exe$/i.test(path.basename(file))) startWindowFix(b);
   emit('running');
   return entry;
@@ -370,6 +376,30 @@ function steamProgress(logs, from, since) {
   return { size: from + Buffer.byteLength(text) + pkg, clientUp, handedOff };
 }
 
+// Under Wine 11 on macOS, Steam's built-in browser (steamwebhelper.exe) paints its
+// windows black and its separate network process can't finish sign-in. cefwrap.exe
+// (src/bin/cefwrap.c) takes its place and starts the real one, renamed
+// steamwebhelper.orig.exe, with --disable-gpu --single-process. Steam's updates put the
+// original back, so this runs before every launch. Returns true once the wrapper is in.
+function deployCefWrapper(steamRoot) {
+  const dir = path.join(steamRoot, 'bin', 'cef', 'cef.win64');
+  const helper = path.join(dir, 'steamwebhelper.exe');
+  const real = path.join(dir, 'steamwebhelper.orig.exe');
+  try {
+    const wrapper = fs.readFileSync(path.join(__dirname, 'bin', 'cefwrap.exe'));
+    if (!fs.existsSync(helper) && !fs.existsSync(real)) return false;
+    if (fs.existsSync(helper)) {
+      if (fs.readFileSync(helper).equals(wrapper)) return fs.existsSync(real);
+      fs.renameSync(helper, real);
+    }
+    fs.writeFileSync(helper, wrapper);
+    return true;
+  } catch (e) {
+    log(`Couldn’t set up Steam’s window fix: ${e.message}`, 'warn');
+    return false;
+  }
+}
+
 function steamLastLine(logs) {
   try {
     const lines = fs.readFileSync(path.join(logs, 'bootstrap_log.txt'), 'utf8').trim().split('\n');
@@ -395,7 +425,19 @@ function watchSteam(runId, opts, attempt) {
   const timer = setInterval(() => {
     if (Date.now() - t0 > 30 * 60 * 1000) return clearInterval(timer);
     const p = steamProgress(logs, from, t0);
-    if (p.clientUp) return clearInterval(timer);
+    if (p.clientUp) {
+      clearInterval(timer);
+      // A first start installs Steam's browser after Umbra launched it, so the wrapper
+      // wasn't in place yet and the window would be black: put it in and restart once.
+      if (!opts.wrapped && deployCefWrapper(path.dirname(opts.file))) {
+        log('Restarting Steam once so its window draws properly…');
+        kill(opts.bottleId)
+          .then(() => new Promise((r) => setTimeout(r, 2000)))
+          .then(() => launch({ ...opts, steamAttempt: attempt }))
+          .catch((e) => log(`Couldn’t restart Steam: ${e.message}`, 'error'));
+      }
+      return;
+    }
     const alive = running.has(runId);
     if (p.size !== lastSize) { lastSize = p.size; lastGrowth = Date.now(); }
     handedOffAt = p.handedOff ? handedOffAt || Date.now() : 0;
@@ -1137,7 +1179,7 @@ async function doInstallSteam(onProgress) {
 }
 
 module.exports = {
-  steamProgress, engineKind, bottleKind,
+  steamProgress, deployCefWrapper, engineKind, bottleKind,
   init, setEngine, getEngine, createBottle, deleteBottle, setWinver, setRetina, launch, runningList, runningIn, creditPlaytime, stop, kill,
   uninstallTarget, splitArgs, prefetchSteamClient, steamNeedsRuntimes, ensureSteamRuntimes,
   tool, driveC, scan, isInstaller, readdSteam, migrateSteamArgs, repairSteam, uninstallInfo, uninstallApp, mainBottle, addWindowsTools, storeStatus, installFromStore, fixCommonProblems, createMacLauncher, installComponent, runWinetricks, setDxvk, addApp, refreshIcons, importSteamGames, updateApp, removeApp, runApp, steamStatus, installSteam, prefixOf, bottle,
