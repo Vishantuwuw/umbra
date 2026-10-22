@@ -352,6 +352,13 @@ function steamLastLine(logs) {
   } catch { return ''; }
 }
 
+// Makes Steam's updater download and reinstall its whole client on the next launch
+// (games and settings are kept). Fixes "Failed to load steamui.dll".
+function resetSteamClient(root) {
+  for (const d of ['package', 'appcache/httpcache', 'config/htmlcache']) fs.rmSync(path.join(root, d), { recursive: true, force: true });
+  fs.rmSync(path.join(root, 'steamui.dll'), { force: true });
+}
+
 function watchSteam(runId, opts, attempt) {
   const logs = path.join(path.dirname(opts.file), 'logs');
   let from = 0;
@@ -378,9 +385,15 @@ function watchSteam(runId, opts, attempt) {
       emit('steam-failed', { lastLine: last });
       return;
     }
+    // Closing before the client opens usually means broken client files ("Failed to load
+    // steamui.dll", often from an interrupted update); a restart alone brings the same
+    // files back, so make Steam reinstall them.
+    const reinstall = !reopenStuck;
     log(reopenStuck ? 'Steam finished updating but didn’t reopen. Restarting it…'
-      : alive ? 'Steam’s update stopped making progress. Restarting it…' : 'Steam closed before it opened. Starting it again…', 'warn');
+      : reinstall ? 'Steam didn’t open. Reinstalling its client files and starting it again…'
+        : 'Restarting Steam…', 'warn');
     kill(opts.bottleId)
+      .then(() => { if (reinstall) resetSteamClient(path.dirname(opts.file)); })
       .then(() => new Promise((r) => setTimeout(r, 2000)))
       .then(() => launch({ ...opts, steamAttempt: attempt + 1 }))
       .catch((e) => log(`Couldn’t restart Steam: ${e.message}`, 'error'));
@@ -859,7 +872,7 @@ async function repairSteam(onProgress = () => {}) {
   const b = bottle(st.bottleId);
   await kill(b.id).catch(() => {});
   const root = path.dirname(findSteam(b));
-  for (const d of ['package', 'appcache/httpcache', 'config/htmlcache']) fs.rmSync(path.join(root, d), { recursive: true, force: true });
+  resetSteamClient(root);
   await prefetchSteamClient(root, onProgress);
   if (b.winver !== 'win10' && b.winver !== 'win11') await setWinver(b.id, 'win10');
   const id = readdSteam();
