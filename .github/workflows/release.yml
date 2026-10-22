@@ -34,9 +34,17 @@ jobs:
           UMBRA_HOME: ${{ runner.temp }}/umbra-home
         run: |
           npx electron . &
-          sleep 1.4 && screencapture -x "$RUNNER_TEMP/mac-splash.png"
-          sleep 9 && screencapture -x "$RUNNER_TEMP/mac-library.png"
+          for i in 1 2 3 4 5 6; do sleep 0.6; screencapture -x "$RUNNER_TEMP/mac-splash-$i.png"; done
+          sleep 8 && screencapture -x "$RUNNER_TEMP/mac-library.png"
           pkill -f electron || true
+      - name: Publish screenshots to the screenshots branch
+        if: github.ref == 'refs/heads/main'
+        run: |
+          mkdir -p "$RUNNER_TEMP/shots" && cp "$RUNNER_TEMP"/*.png "$RUNNER_TEMP/shots/"
+          cd "$RUNNER_TEMP/shots"
+          git init -q -b screenshots && git add .
+          git -c user.name=github-actions -c user.email=github-actions@users.noreply.github.com commit -qm "Mac screenshots from ${GITHUB_SHA::7}"
+          git push -qf "https://x-access-token:${{ github.token }}@github.com/${{ github.repository }}" screenshots
       - uses: actions/upload-artifact@v4
         if: always()
         with:
