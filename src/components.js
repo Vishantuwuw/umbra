@@ -85,7 +85,11 @@ async function install(rt, b, id, onProgress) {
       await rt.waitServer(b);
       if (step.cleanup) fs.rmSync(path.join(prefix, step.cleanup), { recursive: true, force: true });
       // Visual C++ returns 1638 when a newer version is already installed.
-      if (code && code !== 1638 && code !== 3010) throw new Error(`${path.basename(exe)} failed (exit code ${code})`);
+      if (code && code !== 1638 && code !== 3010) {
+        // The cached download may be damaged; fetch it fresh next time.
+        if (step.url) fs.rmSync(exe, { force: true });
+        throw new Error(`${path.basename(exe)} failed (exit code ${code})`);
+      }
     }
   }
   b.components = { ...(b.components || {}), [id]: Date.now() };

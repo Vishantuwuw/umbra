@@ -22,12 +22,30 @@ function file() {
   return path.join(app.getPath('userData'), 'umbra.json');
 }
 
+function read(f) {
+  const raw = JSON.parse(fs.readFileSync(f, 'utf8'));
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) throw new Error('not a settings object');
+  return { ...DEFAULTS, ...raw, settings: { ...DEFAULTS.settings, ...(raw.settings || {}) } };
+}
+
+// Falls back to the last good copy; a file that can't be read is moved aside
+// rather than overwritten with empty defaults on the next save.
 function load() {
+  const f = file();
   try {
-    const raw = JSON.parse(fs.readFileSync(file(), 'utf8'));
-    data = { ...DEFAULTS, ...raw, settings: { ...DEFAULTS.settings, ...(raw.settings || {}) } };
+    data = read(f);
+    return data;
+  } catch (e) {
+    if (e.code !== 'ENOENT') console.error(`Could not read ${f}: ${e.message}`);
+  }
+  try {
+    data = read(`${f}.bak`);
+    console.error(`Loaded the backup copy ${f}.bak`);
   } catch {
     data = JSON.parse(JSON.stringify(DEFAULTS));
+  }
+  if (fs.existsSync(f)) {
+    try { fs.renameSync(f, `${f}.corrupt-${Date.now()}`); } catch (e) { console.error(`Could not move aside ${f}: ${e.message}`); }
   }
   return data;
 }
@@ -41,11 +59,22 @@ function save() {
   saveTimer = setTimeout(flush, 150);
 }
 
+// Writes to a temp file and renames it over the old one, so a crash mid-write
+// never leaves a half-written umbra.json; the previous version is kept as .bak.
 function flush() {
   clearTimeout(saveTimer);
   if (!data) return;
-  fs.mkdirSync(path.dirname(file()), { recursive: true });
-  fs.writeFileSync(file(), JSON.stringify(data, null, 2));
+  const f = file();
+  const tmp = `${f}.tmp`;
+  try {
+    fs.mkdirSync(path.dirname(f), { recursive: true });
+    fs.writeFileSync(tmp, JSON.stringify(data, null, 2));
+    if (fs.existsSync(f)) fs.copyFileSync(f, `${f}.bak`);
+    fs.renameSync(tmp, f);
+  } catch (e) {
+    console.error(`Could not save ${f}: ${e.message}`);
+    try { fs.rmSync(tmp, { force: true }); } catch {}
+  }
 }
 
 module.exports = { load, get, save, flush };

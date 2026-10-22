@@ -68,4 +68,49 @@ function installedGames(driveC) {
   return games;
 }
 
-module.exports = { gameForExe, installedGames };
+// Parses Valve's KeyValues text ("key" "value" pairs and nested { } blocks).
+function parseKeyValues(txt) {
+  const tokens = [];
+  const re = /"((?:[^"\\]|\\.)*)"|([{}])|\/\/[^\n]*|\[[^\]\n]*\]|([^\s"{}]+)/g;
+  for (let m; (m = re.exec(txt));) {
+    if (m[1] !== undefined) tokens.push({ s: m[1].replace(/\\(.)/g, (_, c) => ({ n: '\n', t: '\t' })[c] ?? c) });
+    else if (m[2]) tokens.push(m[2]);
+    else if (m[3] !== undefined) tokens.push({ s: m[3] });
+  }
+  let i = 0;
+  const block = () => {
+    const obj = {};
+    while (i < tokens.length) {
+      const key = tokens[i++];
+      if (key === '}') return obj;
+      if (key === '{') { block(); continue; }
+      const val = tokens[i++];
+      if (val === undefined || val === '}') { if (val === '}') return obj; break; }
+      obj[key.s] = val === '{' ? block() : val.s;
+    }
+    return obj;
+  };
+  return block();
+}
+
+// The package files a Steam client manifest (steam_client_win32) lists, named as
+// the bootstrapper looks for them in Steam/package (the .vz variant when listed).
+function clientPackages(txt) {
+  const out = [];
+  const visit = (obj, depth) => {
+    for (const [name, v] of Object.entries(obj)) {
+      if (!v || typeof v !== 'object' || depth > 4) continue;
+      if (typeof v.file === 'string') {
+        const vz = typeof v.zipvz === 'string' ? v.zipvz : null;
+        const file = vz || v.file;
+        // Only a rough size for progress: the .vz copy is compressed.
+        const size = Number(v.size) || Number(file.match(/_(\d+)$/)?.[1]) || 0;
+        if (/^[\w.-]+$/.test(file) && !file.startsWith('.')) out.push({ name, file, size });
+      } else visit(v, depth + 1);
+    }
+  };
+  visit(parseKeyValues(txt), 0);
+  return out.filter((p, i) => out.findIndex((q) => q.file === p.file) === i);
+}
+
+module.exports = { gameForExe, installedGames, parseKeyValues, clientPackages };

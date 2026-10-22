@@ -8,7 +8,8 @@ const { app } = require('electron');
 const RT_ICON = 3;
 const RT_GROUP_ICON = 14;
 const PNG = Buffer.from([0x89, 0x50, 0x4e, 0x47]);
-const MAX_READ = 512 * 1024 * 1024;
+const MAX_BLOB = 16 * 1024 * 1024;
+const MAX_SECTION = 64 * 1024 * 1024;
 
 function iconDir() {
   const dir = path.join(app.getPath('userData'), 'icons');
@@ -16,19 +17,55 @@ function iconDir() {
   return dir;
 }
 
-function parse(buf) {
-  if (buf.readUInt16LE(0) !== 0x5a4d) return null; // "MZ"
-  const pe = buf.readUInt32LE(0x3c);
-  if (buf.readUInt32LE(pe) !== 0x4550) return null; // "PE\0\0"
-  const sections = buf.readUInt16LE(pe + 6);
-  const optSize = buf.readUInt16LE(pe + 20);
+// Reads byte ranges of a file on demand, keeping the ranges already read.
+function fileReader(fd, size) {
+  const chunks = [];
+  const bytes = (at, len) => {
+    if (at < 0 || len < 0 || at + len > size) throw new RangeError('Read past end of file');
+    const c = chunks.find((x) => at >= x.at && at + len <= x.at + x.buf.length);
+    if (c) return c.buf.subarray(at - c.at, at - c.at + len);
+    const buf = Buffer.alloc(len);
+    fs.readSync(fd, buf, 0, len, at);
+    return buf;
+  };
+  const load = (at, len) => {
+    len = Math.max(0, Math.min(len, size - at));
+    const buf = Buffer.alloc(len);
+    fs.readSync(fd, buf, 0, len, at);
+    chunks.push({ at, buf });
+  };
+  return { bytes, load, size };
+}
+
+function bufferReader(buf) {
+  return {
+    bytes: (at, len) => {
+      if (at < 0 || len < 0 || at + len > buf.length) throw new RangeError('Read past end of buffer');
+      return buf.subarray(at, at + len);
+    },
+    load: () => {},
+    size: buf.length,
+  };
+}
+
+function parse(src) {
+  const r = Buffer.isBuffer(src) ? bufferReader(src) : src;
+  r.load(0, 4096);
+  const u16 = (at) => r.bytes(at, 2).readUInt16LE(0);
+  const u32 = (at) => r.bytes(at, 4).readUInt32LE(0);
+  if (u16(0) !== 0x5a4d) return null; // "MZ"
+  const pe = u32(0x3c);
+  if (u32(pe) !== 0x4550) return null; // "PE\0\0"
+  const sections = u16(pe + 6);
+  const optSize = u16(pe + 20);
   const opt = pe + 24;
-  const dirs = buf.readUInt16LE(opt) === 0x20b ? opt + 112 : opt + 96;
-  const resRva = buf.readUInt32LE(dirs + 2 * 8);
+  r.load(opt, optSize + sections * 40);
+  const dirs = u16(opt) === 0x20b ? opt + 112 : opt + 96;
+  const resRva = u32(dirs + 2 * 8);
   if (!resRva) return null;
   const secs = [];
   for (let i = 0, s = opt + optSize; i < sections; i++, s += 40) {
-    secs.push({ va: buf.readUInt32LE(s + 12), vsize: Math.max(buf.readUInt32LE(s + 8), buf.readUInt32LE(s + 16)), raw: buf.readUInt32LE(s + 20) });
+    secs.push({ va: u32(s + 12), vsize: Math.max(u32(s + 8), u32(s + 16)), raw: u32(s + 20), rawSize: u32(s + 16) });
   }
   const off = (rva) => {
     const s = secs.find((x) => rva >= x.va && rva < x.va + x.vsize);
@@ -36,26 +73,34 @@ function parse(buf) {
   };
   const root = off(resRva);
   if (root < 0) return null;
+  const rsrc = secs.find((x) => resRva >= x.va && resRva < x.va + x.vsize);
+  r.load(rsrc.raw, Math.min(rsrc.rawSize, MAX_SECTION));
 
   const entries = (dir) => {
-    const n = buf.readUInt16LE(dir + 12) + buf.readUInt16LE(dir + 14);
+    const n = u16(dir + 12) + u16(dir + 14);
     const out = [];
     for (let i = 0; i < n; i++) {
       const e = dir + 16 + i * 8;
-      const data = buf.readUInt32LE(e + 4);
-      out.push({ id: buf.readUInt32LE(e), sub: !!(data & 0x80000000), at: root + (data & 0x7fffffff) });
+      const data = u32(e + 4);
+      out.push({ id: u32(e), sub: !!(data & 0x80000000), at: root + (data & 0x7fffffff) });
     }
     return out;
   };
-  // Follows type → name → language down to the first data blob.
+  // Follows type → name → language down to the first data blob. Real trees are
+  // three levels deep; the cap stops a malformed (looping) tree.
   const leaf = (e) => {
+    if (e.at === undefined) return null;
+    const seen = new Set();
     while (e.sub) {
+      if (seen.has(e.at) || seen.size > 8) return null;
+      seen.add(e.at);
       const next = entries(e.at)[0];
       if (!next) return null;
       e = next;
     }
-    const start = off(buf.readUInt32LE(e.at));
-    return start < 0 ? null : buf.subarray(start, start + buf.readUInt32LE(e.at + 4));
+    const start = off(u32(e.at));
+    const len = u32(e.at + 4);
+    return start < 0 || len > MAX_BLOB ? null : r.bytes(start, len);
   };
 
   const types = entries(root);
@@ -88,22 +133,26 @@ function parse(buf) {
   return { ext: 'ico', data: Buffer.concat([header, data]) };
 }
 
+// Reads only the PE headers and the resource section, not the whole exe.
 function extract(exe) {
+  let fd = null;
   try {
     const st = fs.statSync(exe);
-    if (st.size > MAX_READ) return null;
     const key = crypto.createHash('sha1').update(`${exe}:${st.size}:${st.mtimeMs}`).digest('hex').slice(0, 16);
     for (const ext of ['png', 'ico']) {
       const cached = path.join(iconDir(), `${key}.${ext}`);
       if (fs.existsSync(cached)) return cached;
     }
-    const icon = parse(fs.readFileSync(exe));
+    fd = fs.openSync(exe, 'r');
+    const icon = parse(fileReader(fd, st.size));
     if (!icon) return null;
     const out = path.join(iconDir(), `${key}.${icon.ext}`);
     fs.writeFileSync(out, icon.data);
     return out;
   } catch {
     return null;
+  } finally {
+    if (fd !== null) fs.closeSync(fd);
   }
 }
 

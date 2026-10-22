@@ -46,6 +46,7 @@ const VIEWS = {
   settings: { title: 'Settings', icon: 'sliders', sub: () => 'Performance, setup and the Windows engine.' },
   bottles: { title: 'Bottles', icon: 'bottle', sub: () => 'Advanced: separate Windows environments, each with its own C: drive.', advanced: true },
   console: { title: 'Console', icon: 'console', sub: () => 'Advanced: live output from everything running in Umbra.', advanced: true },
+  admin: { title: 'Admin', icon: 'shield', sub: () => 'Accounts, devices and bans.', advanced: true, hidden: () => S.auth?.role !== 'admin' },
 };
 
 // ---------- helpers ----------
@@ -117,13 +118,14 @@ function toast(msg, kind = 'ok') {
 // ---------- shell ----------
 function renderNav() {
   const counts = { library: S.apps.filter((a) => a.category !== 'tool').length || '', bottles: S.bottles.length, console: S.running.length || '' };
-  $('#nav').innerHTML = Object.entries(VIEWS).map(([k, v], i) => `
+  $('#nav').innerHTML = Object.entries(VIEWS).filter(([, v]) => !v.hidden?.()).map(([k, v], i) => `
     ${i === 3 ? '<div class="nav-sep"></div><div class="nav-label">Advanced</div>' : ''}
     <button class="nav-item ${v.advanced ? 'small' : ''} ${view === k ? 'active' : ''}" data-nav="${k}">${icon(v.icon)}${v.title}<span class="count">${counts[k] ?? ''}</span></button>`).join('');
 
   const e = S.engine;
   const rosettaMissing = S.cpu.appleSilicon && !S.cpu.rosetta;
   $('#side-foot').innerHTML = `
+    ${accountPill()}
     ${S.running.length ? `<div class="pill" data-nav="console" style="cursor:pointer"><div class="dot live"></div><div><b>${S.running.length} running</b><span>${esc(S.running.map((r) => r.name).join(', '))}</span></div></div>` : ''}
     ${S.update ? `<div class="pill update" data-act="open-update" style="cursor:pointer"><div class="dot live"></div><div><b>Update available</b><span>Umbra ${esc(S.update.version)} · click to download</span></div></div>` : ''}
     <div class="pill" data-nav="settings" style="cursor:pointer">
@@ -142,15 +144,20 @@ function renderTop() {
     settings: '',
     bottles: `<button class="btn primary" data-act="new-bottle">${icon('plus')}New Bottle</button>`,
     console: `<button class="btn" data-act="clear-logs">${icon('trash')}Clear</button>`,
+    admin: `<label class="search">${icon('search')}<input id="admin-search" placeholder="Search name, email or HWID" value="${esc(adminQuery)}" spellcheck="false"></label><button class="btn" data-act="admin-refresh">${icon('refresh')}Refresh</button>`,
   };
   $('#top-actions').innerHTML = actions[view];
 }
 
+let topFor = null;
 function render() {
   if (!S) return;
+  renderAuth();
+  if (VIEWS[view].hidden?.()) view = 'library';
   renderNav();
-  if (document.activeElement?.id !== 'search') renderTop();
-  const fn = { library: viewLibrary, store: viewStore, settings: viewSettings, bottles: viewBottles, console: viewConsole }[view] || viewLibrary;
+  // Keep the header (and the search box being typed in) unless the view changed.
+  if (topFor !== view || !/^(admin-)?search$/.test(document.activeElement?.id || '')) { renderTop(); topFor = view; }
+  const fn = { library: viewLibrary, store: viewStore, settings: viewSettings, bottles: viewBottles, console: viewConsole, admin: viewAdmin }[view] || viewLibrary;
   const scroll = $('#view').scrollTop;
   $('#view').innerHTML = fn();
   $('#view').scrollTop = scroll;
@@ -161,6 +168,7 @@ function render() {
 function go(v) {
   view = v;
   if (v === 'settings') loadEngines();
+  if (v === 'admin') loadAdmin();
   $('#view').style.animation = 'none';
   void $('#view').offsetWidth;
   $('#view').style.animation = '';
@@ -340,7 +348,7 @@ function viewSettings() {
   const s = S.settings;
   const toggle = (key, title, desc) => `<div class="toggle-row"><div class="t"><b>${title}</b><span>${desc}</span></div><button class="switch ${s[key] ? 'on' : ''}" data-act="toggle" data-key="${key}"></button></div>`;
   const pct = Math.round((taskPct.engine?.pct ?? t?.pct ?? 0) * 100);
-  return `${engineBanner()}<div class="card engine-card setup-again">
+  return `${engineBanner()}${accountCard()}<div class="card engine-card setup-again">
       <div><b>Setup</b><span>Reinstall Steam, Windows essentials or game components any time.</span></div>
       <button class="btn" data-act="open-wizard">${icon('bolt')}Run Setup Again</button>
     </div>
@@ -566,7 +574,7 @@ let COMPONENTS = null;
 let ENGINES = null;
 async function loadEngines() {
   ENGINES = await call('engine:list').catch(() => []);
-  if (view === 'engine') render();
+  if (view === 'settings') render();
 }
 async function componentsModal(bottleId) {
   COMPONENTS ||= await call('components:list');
@@ -766,7 +774,7 @@ function menu(anchor, items) {
   document.querySelector('.menu')?.remove();
   const m = document.createElement('div');
   m.className = 'menu';
-  m.innerHTML = items.map((it, i) => (it === '-' ? '<div class="nav-sep" style="margin:4px 6px"></div>' : `<button data-i="${i}" class="${it.danger ? 'danger' : ''}">${icon(it.icon)}${it.label}</button>`)).join('');
+  m.innerHTML = items.map((it, i) => (it === '-' ? '<div class="nav-sep" style="margin:4px 6px"></div>' : `<button data-i="${i}" class="${it.danger ? 'danger' : ''}">${icon(it.icon)}${esc(it.label)}</button>`)).join('');
   document.body.appendChild(m);
   const r = anchor.getBoundingClientRect();
   const w = m.offsetWidth;
@@ -946,8 +954,15 @@ api.on('task', (t) => {
   taskPct[t.id] = { pct: t.pct, detail: t.detail };
   if (t.id === 'setup' && wizard?.step === 'progress') paintWizard(t);
   renderDock();
-  if (view === 'settings' || view === 'store' || (view === 'library' && t.id === 'setup')) render();
+  if (view === 'settings' || view === 'store' || (view === 'library' && t.id === 'setup')) renderSoon();
 });
+
+// Progress arrives per download chunk; redrawing the view that often eats clicks.
+let renderTimer = null;
+function renderSoon() {
+  if (renderTimer) return;
+  renderTimer = setTimeout(() => { renderTimer = null; render(); }, 400);
+}
 api.on('log', (l) => {
   logs.push(l);
   if (logs.length > 3000) logs = logs.slice(-2000);
@@ -982,5 +997,5 @@ api.on('open-files', (files) => { const f = files.find((p) => RUNNABLE.test(p));
   S = await api.call('state');
   logs = await api.call('logs');
   render();
-  if (!S.settings.setupDone) openWizard();
+  if (!S.settings.setupDone && !isLocked()) openWizard();
 })();

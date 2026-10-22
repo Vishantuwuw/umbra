@@ -4,6 +4,7 @@ const store = require('./store');
 const engine = require('./engine');
 const runtime = require('./runtime');
 const components = require('./components');
+const auth = require('./auth');
 
 const RENDERER = path.join(__dirname, 'renderer');
 const MIN_SPLASH_MS = 2600;
@@ -41,10 +42,50 @@ async function checkForUpdate() {
 app.setName('Umbra');
 if (process.env.UMBRA_HOME) app.setPath('userData', process.env.UMBRA_HOME);
 
+// Sign-in links come back from the browser as umbra://auth/callback?code=…
+if (process.defaultApp) app.setAsDefaultProtocolClient('umbra', process.execPath, [path.resolve(process.argv[1] || '.')]);
+else app.setAsDefaultProtocolClient('umbra');
+if (!app.requestSingleInstanceLock()) app.quit();
+const authUrl = (argv) => argv.find((a) => /^umbra:\/\//i.test(a));
+app.on('open-url', (e, url) => {
+  e.preventDefault();
+  auth.handleUrl(url);
+  focusMain();
+});
+app.on('second-instance', (_e, argv) => {
+  const url = authUrl(argv);
+  if (url) auth.handleUrl(url);
+  focusMain();
+});
+if (authUrl(process.argv)) auth.handleUrl(authUrl(process.argv));
+
+function focusMain() {
+  if (!main || main.isDestroyed() || splash) return;
+  if (main.isMinimized()) main.restore();
+  main.show();
+  main.focus();
+}
+
+// Called whenever the account changes; a ban also stops everything that's running.
+let wasBanned = false;
+function onAuthChange(st) {
+  const isBanned = Boolean(st.banned);
+  if (isBanned && !wasBanned) {
+    for (const id of new Set(runtime.runningList().map((r) => r.bottleId))) runtime.kill(id).catch(() => {});
+  }
+  wasBanned = isBanned;
+  pushState();
+}
+
 // Files opened from Finder ("Open With → Umbra" or double-clicking an .exe).
 app.on('open-file', (e, file) => {
   e.preventDefault();
   pendingFiles.push(file);
+  // The window may have been closed while Umbra kept running in the Dock.
+  if (app.isReady() && !main && !splash) {
+    createMain();
+    main.once('ready-to-show', () => main.show());
+  }
   flushFiles();
 });
 
@@ -87,6 +128,7 @@ function state() {
     tasks: [...tasks.values()],
     version: app.getVersion(),
     update,
+    auth: { ...auth.state(), locked: auth.locked() },
   };
 }
 
@@ -127,6 +169,8 @@ function createSplash() {
     webPreferences: { preload: path.join(__dirname, 'preload.js') },
   });
   splash.loadFile(path.join(RENDERER, 'splash.html'));
+  // Closing the splash early (⌘W) shouldn't leave Umbra running with no window.
+  splash.on('closed', () => { splash = null; ipcMain.emit('splash:done'); });
   splash.once('ready-to-show', () => splash.show());
   return new Promise((r) => splash.webContents.once('did-finish-load', r));
 }
@@ -155,15 +199,21 @@ async function boot() {
   splashStep(74, `Loading ${store.get().bottles.length} bottle(s) and ${store.get().apps.length} app(s)`);
   runtime.refreshIcons();
   runtime.migrateSteamArgs();
+  if (auth.configured()) {
+    splashStep(82, 'Checking your account');
+    await auth.init(onAuthChange).catch((e) => console.warn('Umbra: account init failed:', e.message));
+  } else {
+    await auth.init(onAuthChange);
+  }
   createMain();
   await new Promise((r) => main.once('ready-to-show', r));
   splashStep(90, 'Preparing interface');
   await sleep(Math.max(0, MIN_SPLASH_MS - (Date.now() - started)));
-  const done = new Promise((r) => ipcMain.once('splash:done', r));
+  const done = splash ? new Promise((r) => ipcMain.once('splash:done', r)) : null;
   splashStep(100, 'Ready');
   await done;
   main.show();
-  splash.close();
+  if (splash && !splash.isDestroyed()) splash.close();
   splash = null;
   flushFiles();
   checkForUpdate();
@@ -191,9 +241,13 @@ function createMain() {
   main.on('closed', () => { main = null; });
 }
 
+// Until someone signs in (and isn't banned), only these calls work: no guests.
+const OPEN = /^(state|logs|auth:.*|open:external)$/;
+
 function handle(channel, fn) {
   ipcMain.handle(channel, async (_e, ...args) => {
     try {
+      if (auth.locked() && !OPEN.test(channel)) throw new Error(auth.state().banned ? 'This device is banned from Umbra' : 'Sign in to use Umbra');
       const value = await fn(...args);
       return { ok: true, value };
     } catch (err) {
@@ -404,7 +458,26 @@ handle('steam:import', () => {
 });
 handle('steam:install', () => task('steam', 'Installing Steam', (p) => runtime.installSteam(p)));
 
-handle('open:external', (url) => shell.openExternal(url));
+handle('open:external', (url) => {
+  if (!/^https:\/\//i.test(String(url))) throw new Error('Only web links can be opened');
+  return shell.openExternal(url);
+});
+
+handle('auth:email-in', (email, password) => auth.signInEmail(email, password));
+handle('auth:email-up', (email, password, name) => auth.signUpEmail(email, password, name));
+handle('auth:provider', (provider) => auth.signInProvider(provider));
+handle('auth:cancel', () => auth.cancelPending());
+handle('auth:reset', (email) => auth.resetPassword(email));
+handle('auth:set-password', (password) => auth.setPassword(password));
+handle('auth:retry', () => auth.retry());
+handle('auth:sign-out', async () => {
+  for (const id of new Set(runtime.runningList().map((r) => r.bottleId))) await runtime.kill(id).catch(() => {});
+  await auth.signOut();
+});
+handle('admin:list', () => auth.adminList());
+handle('admin:hwid', (hwid, banned, reason) => auth.adminHwidBan(hwid, banned, reason));
+handle('admin:user', (id, banned, reason, devices) => auth.adminUserBan(id, banned, reason, devices));
+handle('admin:role', (id, role) => auth.adminRole(id, role));
 
 app.whenReady().then(() => {
   if (process.platform === 'darwin') {

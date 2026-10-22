@@ -12,13 +12,19 @@ const components = require('./components');
 const catalog = require('./catalog');
 
 const STEAM_SETUP_URL = 'https://cdn.akamai.steamstatic.com/client/installer/SteamSetup.exe';
+const STEAM_CLIENT_CDN = 'https://cdn.steamstatic.com/client/';
 // Steam's built-in browser (sign-in, store, library) needs its sandbox and GPU
 // acceleration turned off to load under Wine.
 const STEAM_ARGS = '-no-cef-sandbox -cef-disable-gpu -cef-disable-gpu-compositing';
 const OLD_STEAM_ARGS = ['-cef-disable-gpu -cef-disable-sandbox'];
-const SKIP_EXE = /(unins|uninstall|setup|install|update|crash|report|helper|redist|vcredist|dxsetup|dotnet|directx|notification|service|webhelper|7z|^winver|^cef)/i;
+const SKIP_EXE = /(unins|uninstall|setup|install|update|crash|report|helper|redist|vcredist|dxsetup|dotnet|directx|notification|service|webhelper|^7z\.exe$|^winver|^cef)/i;
 const INSTALLER = /(setup|install|^inst[_-]|_inst\b)/i;
 const SKIP_DIR = /^(windows|common files|internet explorer|windows media player|windows nt|windowspowershell|microsoft\.net)$/i;
+// Folders inside one program that hold its binaries or parts, not separate programs.
+const ARCH_DIR = /^(x64|x86|x86_64|amd64|i386|bin|bin32|bin64|binaries|win64|win32|win|retail)$/i;
+const PART_DIR = /^(engine|redist|_?commonredist|redistributables?|directx|vcredist|dotnet|support|tools|extras|prereqs?|plugins|updater|update|uninstall|data|content|resources|locales?|localization|lang|languages|lib|libs|runtime|cef|easyanticheat|battleye|eac|crashreporter|logs|cache)$/i;
+// Folders that hold several separately installed programs (GOG Galaxy/Games, Steam/steamapps/common…).
+const CONTAINER_DIR = /^(games|apps|library|programs|steamapps|common)$/i;
 
 let wine = null; // { path, version, source }
 const running = new Map(); // runId -> { child, appId, bottleId, name, started }
@@ -126,13 +132,17 @@ async function createBottle({ name, winver = 'win10' }, onProgress = () => {}) {
   return b;
 }
 
-async function waitServer(b) {
+// Waits for every Wine process in the bottle to exit, giving up after `timeout`
+// ms, since a game left running would otherwise keep this waiting forever.
+async function waitServer(b, timeout = 120000) {
   const server = engine.wineserverFor(wine.path);
   if (!server) return;
   await new Promise((resolve) => {
     const child = spawn(server, ['-w'], { env: wineEnv(b) });
-    child.on('exit', resolve);
-    child.on('error', resolve);
+    const timer = setTimeout(() => { child.kill(); resolve(); }, timeout);
+    const done = () => { clearTimeout(timer); resolve(); };
+    child.on('exit', done);
+    child.on('error', done);
   });
 }
 
@@ -222,7 +232,10 @@ async function setDxvk(bottleId, on, onProgress = () => {}) {
   const tmp = path.join(engine.cacheDir(), 'dxvk-unpack');
   fs.rmSync(tmp, { recursive: true, force: true });
   fs.mkdirSync(tmp, { recursive: true });
-  await engine.exec('tar', ['-xf', archive, '-C', tmp]);
+  await engine.exec('tar', ['-xf', archive, '-C', tmp]).catch((e) => {
+    fs.rmSync(archive, { force: true });
+    throw new Error(`Could not unpack ${asset.name}, so it was deleted. Try again. (${e.message})`);
+  });
   const win = path.join(prefixOf(b), 'drive_c', 'windows');
   const dlls = [...new Set([
     ...copyDlls(findDir(tmp, 'x64') || findDir(tmp, 'x86_64-windows', 6) || '', path.join(win, 'system32')),
@@ -241,12 +254,26 @@ function argsFor(file) {
   const ext = path.extname(file).toLowerCase();
   if (ext === '.msi') return ['msiexec', '/i', file];
   if (ext === '.bat' || ext === '.cmd') return ['cmd', '/c', file];
-  if (ext === '.lnk') return ['start', '/unix', file];
+  if (ext === '.lnk') return ['start', '/wait', '/unix', file];
   return [file];
 }
 
+// Splits a command line like Windows does for simple cases: quotes can start
+// mid-word (-config="C:\My Games\a.ini") and are removed.
 function splitArgs(s) {
-  return (s || '').match(/"[^"]*"|\S+/g)?.map((a) => a.replace(/^"|"$/g, '')) || [];
+  const out = [];
+  let cur = '';
+  let quoted = false;
+  let started = false;
+  for (const ch of s || '') {
+    if (ch === '"') { quoted = !quoted; started = true; } else if (!quoted && /\s/.test(ch)) {
+      if (started) out.push(cur);
+      cur = '';
+      started = false;
+    } else { cur += ch; started = true; }
+  }
+  if (started) out.push(cur);
+  return out;
 }
 
 // Launches a Windows program without waiting for it; tracks it as running.
@@ -272,12 +299,12 @@ function launch({ bottleId, file, args = '', appId = null, name }) {
   store.save();
   const done = (code) => {
     if (!running.has(runId)) return;
-    const { stopped } = running.get(runId);
+    const { stopped, started } = running.get(runId);
     running.delete(runId);
     const secs = Math.round((Date.now() - entry.started) / 1000);
     if (appId) {
       const a = store.get().apps.find((x) => x.id === appId);
-      if (a) a.playtime = (a.playtime || 0) + secs;
+      if (a) a.playtime = (a.playtime || 0) + Math.round((Date.now() - started) / 1000);
       store.save();
     }
     log(`■ ${label} exited (code ${code ?? '?'}) after ${secs}s`, code ? 'warn' : 'info');
@@ -297,6 +324,23 @@ function launch({ bottleId, file, args = '', appId = null, name }) {
 
 function runningList() {
   return [...running.values()].map(({ child, stopped, ...rest }) => rest);
+}
+
+// What's running in a bottle, e.g. to warn before Repair Steam stops it all.
+function runningIn(bottleId) {
+  return runningList().filter((r) => r.bottleId === bottleId);
+}
+
+// Adds the time played so far for apps still running (call before quitting) and
+// restarts their clocks so nothing is counted twice; saves right away.
+function creditPlaytime() {
+  const now = Date.now();
+  for (const r of running.values()) {
+    const a = r.appId && store.get().apps.find((x) => x.id === r.appId);
+    if (a) a.playtime = (a.playtime || 0) + Math.round((now - r.started) / 1000);
+    r.started = now;
+  }
+  store.flush();
 }
 
 function stop(runId) {
@@ -333,13 +377,14 @@ function driveC(bottleId) {
   return path.join(prefixOf(bottle(bottleId)), 'drive_c');
 }
 
-function walk(dir, depth, out, ext = /\.exe$/i) {
+// `keep` matches files that are listed even if they look like helpers or installers.
+function walk(dir, depth, out, ext = /\.exe$/i, keep = null) {
   let entries = [];
   try { entries = fs.readdirSync(dir, { withFileTypes: true }); } catch { return; }
   for (const e of entries) {
     const p = path.join(dir, e.name);
-    if (e.isDirectory() && depth > 0 && !SKIP_DIR.test(e.name)) walk(p, depth - 1, out, ext);
-    else if (e.isFile() && ext.test(e.name) && !SKIP_EXE.test(e.name)) out.push(p);
+    if (e.isDirectory() && depth > 0 && !SKIP_DIR.test(e.name)) walk(p, depth - 1, out, ext, keep);
+    else if (e.isFile() && ext.test(e.name) && (!SKIP_EXE.test(e.name) || keep?.test(p))) out.push(p);
   }
 }
 
@@ -348,17 +393,28 @@ function userDirs(c) {
 }
 
 // Every program in a bottle's usual install locations, including Steam games.
-function listExes(bottleId) {
+function listExes(bottleId, keep = null) {
   const c = driveC(bottleId);
   const found = [];
   const pf = ['Program Files', 'Program Files (x86)'].map((r) => path.join(c, r));
-  for (const r of [...pf, path.join(c, 'Games'), path.join(c, 'GOG Games')]) walk(r, 3, found);
-  for (const r of pf) walk(path.join(r, 'Steam', 'steamapps', 'common'), 2, found);
+  for (const r of [...pf, path.join(c, 'Games'), path.join(c, 'GOG Games')]) walk(r, 3, found, undefined, keep);
+  for (const r of pf) walk(path.join(r, 'Steam', 'steamapps', 'common'), 2, found, undefined, keep);
   for (const u of userDirs(c)) {
-    walk(path.join(u, 'AppData', 'Local', 'Programs'), 3, found);
-    walk(path.join(u, 'Desktop'), 1, found);
+    walk(path.join(u, 'AppData', 'Local', 'Programs'), 3, found, undefined, keep);
+    walk(path.join(u, 'Desktop'), 1, found, undefined, keep);
   }
   return [...new Set(found)];
+}
+
+// Exes matching `re` anywhere in the install locations, searching deeper than
+// listExes (Epic's launcher sits 6 folders down in Program Files).
+function findMatching(bottleId, re) {
+  const c = driveC(bottleId);
+  const found = [];
+  const roots = ['Program Files', 'Program Files (x86)', 'Games', 'GOG Games'].map((r) => path.join(c, r));
+  for (const u of userDirs(c)) roots.push(path.join(u, 'AppData', 'Local', 'Programs'));
+  for (const r of roots) walk(r, 7, found, /\.exe$/i, re);
+  return found.filter((f) => re.test(f));
 }
 
 // Start Menu and Desktop shortcuts, which installers create for their main programs.
@@ -382,7 +438,7 @@ function isInstaller(file) {
 }
 
 function snapshot(bottleId) {
-  return { exes: new Set(listExes(bottleId)), lnks: new Set(listShortcuts(bottleId)) };
+  return { exes: new Set(listExes(bottleId)), lnks: new Set(listShortcuts(bottleId)), started: Date.now() };
 }
 
 // .lnk files store their target path as plain or UTF-16 text, so a name match is enough.
@@ -393,21 +449,85 @@ function shortcutTargets(lnk, exe) {
   return buf.toString('latin1').toLowerCase().includes(name) || buf.toString('utf16le').toLowerCase().includes(name);
 }
 
-// After an installer finishes, adds what it installed to the library.
-async function trackInstall(b, before, label, quiet = false) {
+// The Windows path a .lnk points to (C:\...), read from its LinkInfo block, else
+// from the first drive path found in its text.
+function lnkTargetWin(buf) {
+  try {
+    if (buf.readUInt32LE(0) === 0x4c) {
+      const flags = buf.readUInt32LE(0x14);
+      let at = 0x4c;
+      if (flags & 1) at += 2 + buf.readUInt16LE(at);
+      if (flags & 2) {
+        const hdr = buf.readUInt32LE(at + 4);
+        const cstr = (o, wide) => {
+          if (!o) return '';
+          if (wide) { let e = at + o; while (buf.readUInt16LE(e)) e += 2; return buf.toString('utf16le', at + o, e); }
+          const e = buf.indexOf(0, at + o);
+          return buf.toString('latin1', at + o, e);
+        };
+        const base = hdr >= 0x24 ? cstr(buf.readUInt32LE(at + 28), true) : cstr(buf.readUInt32LE(at + 16), false);
+        const suffix = hdr >= 0x24 ? cstr(buf.readUInt32LE(at + 32), true) : cstr(buf.readUInt32LE(at + 24), false);
+        if (/^[a-z]:\\/i.test(base)) return base + suffix;
+      }
+    }
+  } catch {}
+  for (const enc of ['utf16le', 'latin1']) {
+    const m = buf.toString(enc).match(/[a-z]:\\[^\0"*?<>|\r\n]*?\.exe/i);
+    if (m) return m[0];
+  }
+  return null;
+}
+
+// Maps C:\... to the bottle's drive_c, matching each folder name case-insensitively.
+function lnkTarget(bottleId, lnk) {
+  let win;
+  try { win = lnkTargetWin(fs.readFileSync(lnk)); } catch { return null; }
+  if (!win || !/^c:\\/i.test(win)) return null;
+  let p = driveC(bottleId);
+  for (const part of win.slice(3).split('\\').filter(Boolean)) {
+    if (part === '..' || part === '.') return null;
+    let names = [];
+    try { names = fs.readdirSync(p); } catch { return null; }
+    const hit = names.find((n) => n === part) || names.find((n) => n.toLowerCase() === part.toLowerCase());
+    if (!hit) return null;
+    p = path.join(p, hit);
+  }
+  return p;
+}
+
+function changedSince(f, t) {
+  try { return fs.statSync(f).ctimeMs >= t; } catch { return false; }
+}
+
+// After an installer finishes, adds what it installed to the library. `match`
+// (from Get Apps) marks the main program, which is never skipped as a helper.
+async function trackInstall(b, before, label, quiet = false, match = null) {
   log(`Installer finished — looking for what ${label} installed…`);
   // Installers often hand off to child processes; wait for the bottle to go idle (capped,
   // since "launch now" checkboxes can start the installed app right away).
-  await Promise.race([waitServer(b), new Promise((r) => setTimeout(r, 120000))]);
+  await waitServer(b, 120000);
   const known = new Set(store.get().apps.map((a) => a.exe));
-  const exes = listExes(b.id).filter((e) => !before.exes.has(e) && !known.has(e));
-  const lnks = listShortcuts(b.id).filter((l) => !before.lnks.has(l));
+  // Reinstalling over an existing copy keeps the same paths, so files written since
+  // the installer started count as new too (ctime, as installers keep the original mtime).
+  const since = (before.started || Date.now()) - 2000;
+  const fresh = (f, seen) => !seen.has(f) || changedSince(f, since);
+  const lnks = listShortcuts(b.id).filter((l) => fresh(l, before.lnks));
+  const exes = listExes(b.id, match).filter((e) => fresh(e, before.exes) && !known.has(e));
+  const targets = new Map();
+  for (const l of lnks) {
+    const t = lnkTarget(b.id, l);
+    if (!t || !/\.exe$/i.test(t)) continue;
+    targets.set(l, t);
+    if (!exes.includes(t) && !known.has(t) && (!SKIP_EXE.test(path.basename(t)) || match?.test(t))) exes.push(t);
+  }
+  if (match) exes.sort((x, y) => match.test(y) - match.test(x));
   const picks = [];
   for (const exe of exes) {
-    const lnk = lnks.find((l) => shortcutTargets(l, exe));
+    const lnk = lnks.find((l) => targets.get(l) === exe) || lnks.find((l) => !targets.has(l) && shortcutTargets(l, exe));
     if (lnk) picks.push({ exe, name: path.basename(lnk, '.lnk') });
   }
-  if (!picks.length && exes.length <= 2) picks.push(...exes.map((exe) => ({ exe, name: prettyName(exe) })));
+  const main = match ? exes.filter((e) => match.test(e)) : [];
+  if (!picks.length && (main.length || exes.length <= 2)) picks.push(...(main.length ? main : exes).map((exe) => ({ exe, name: prettyName(exe) })));
   const added = picks.slice(0, 5).map((p) => addApp({ bottleId: b.id, exe: p.exe, name: p.name }));
   const rest = exes.filter((e) => !added.some((a) => a.exe === e)).map((exe) => ({ exe, name: prettyName(exe) }));
   log(added.length ? `Added to Library: ${added.map((a) => a.name).join(', ')}` : `${exes.length} new program(s) found in “${b.name}”`);
@@ -424,17 +544,18 @@ function prettyName(exe) {
 }
 
 function addApp({ bottleId, exe, name, args = '', steamAppId, category, catalogId }) {
-  bottle(bottleId);
   const game = steamAppId ? null : steamlib.gameForExe(exe);
   const a = {
     id: `app-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 6)}`,
-    bottleId, exe, name: game?.name || name || prettyName(exe), args, added: Date.now(), playtime: 0,
+    bottleId, exe, name: name || game?.name || prettyName(exe), args, added: Date.now(), playtime: 0,
     steamAppId: steamAppId || game?.appid || null,
     icon: icons.extract(exe),
     iconFor: exe,
     ...(category ? { category } : {}),
     ...(catalogId ? { catalogId } : {}),
   };
+  const b = bottle(bottleId);
+  if (a.steamAppId && b.removedSteam?.includes(String(a.steamAppId))) b.removedSteam = b.removedSteam.filter((x) => x !== String(a.steamAppId));
   store.get().apps.push(a);
   store.save();
   return a;
@@ -463,13 +584,21 @@ function refreshIcons() {
   if (changed) store.save();
 }
 
-// Adds every installed Steam game in a bottle that isn't in the library yet.
+// Adds every installed Steam game in a bottle that isn't in the library yet,
+// except ones the user removed from the Library.
 function importSteamGames(bottleId) {
-  const known = new Set(store.get().apps.map((a) => a.exe.toLowerCase()));
-  const games = steamlib.installedGames(driveC(bottleId)).filter((g) => !known.has(g.exe.toLowerCase()));
+  const apps = store.get().apps;
+  const known = new Set(apps.map((a) => a.exe.toLowerCase()));
+  const ids = new Set(apps.filter((a) => a.bottleId === bottleId && a.steamAppId).map((a) => String(a.steamAppId)));
+  for (const id of bottle(bottleId).removedSteam || []) ids.add(String(id));
+  const games = steamlib.installedGames(driveC(bottleId)).filter((g) => !known.has(g.exe.toLowerCase()) && !ids.has(String(g.steamAppId)));
   const added = games.map((g) => addApp({ bottleId, exe: g.exe, name: g.name, steamAppId: g.steamAppId }));
   if (added.length) log(`Imported from Steam: ${added.map((a) => a.name).join(', ')}`);
   return added;
+}
+
+function launcherIs(root, bundleId) {
+  try { return fs.readFileSync(path.join(root, 'Contents', 'Info.plist'), 'utf8').includes(`<string>${bundleId}</string>`); } catch { return false; }
 }
 
 const shq = (v) => `'${String(v).replace(/'/g, `'\\''`)}'`;
@@ -482,12 +611,16 @@ async function createMacLauncher(id) {
   const b = bottle(a.bottleId);
   const bin = requireEngine();
   const safe = a.name.replace(/[\/:*?"<>|]/g, '').trim() || 'Windows App';
-  const root = path.join(app.getPath('home'), 'Applications', 'Umbra', `${safe}.app`);
+  const bundleId = `app.umbra.launcher.${a.id.replace(/[^a-z0-9]/gi, '')}`;
+  // Another app with the same name may already have a launcher; don't replace it.
+  const dir = path.join(app.getPath('home'), 'Applications', 'Umbra');
+  let root = path.join(dir, `${safe}.app`);
+  for (let i = 2; fs.existsSync(root) && !launcherIs(root, bundleId); i++) root = path.join(dir, `${safe} ${i}.app`);
   const contents = path.join(root, 'Contents');
   fs.rmSync(root, { recursive: true, force: true });
   fs.mkdirSync(path.join(contents, 'MacOS'), { recursive: true });
   fs.mkdirSync(path.join(contents, 'Resources'), { recursive: true });
-  const env = wineEnv(b);
+  const env = wineEnv(b, a.hud ? { MTL_HUD_ENABLED: '1' } : {});
   const keep = ['WINEPREFIX', 'WINEDEBUG', 'WINEDLLOVERRIDES', 'WINEMSYNC', 'WINEESYNC', 'MTL_HUD_ENABLED', 'PATH'];
   const script = [
     '#!/bin/sh',
@@ -505,7 +638,6 @@ async function createMacLauncher(id) {
     await engine.exec('/usr/bin/sips', ['-s', 'format', 'icns', a.icon, '--out', icns]).catch(() => {});
     if (fs.existsSync(icns)) iconKey = '<key>CFBundleIconFile</key><string>icon</string>';
   }
-  const bundleId = `app.umbra.launcher.${a.id.replace(/[^a-z0-9]/gi, '')}`;
   const xml = (v) => String(v).replace(/&/g, '&amp;').replace(/</g, '&lt;');
   fs.writeFileSync(path.join(contents, 'Info.plist'), `<?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
@@ -571,13 +703,22 @@ async function installFromStore(id, onProgress) {
   const code = await wineRun(b, [...argsFor(file), ...item.args || []], { tag: item.name, cwd: path.dirname(file) });
   if (code && code !== 3010) log(`${item.name} installer exited with code ${code}`, 'warn');
   onProgress(0.9, 'Adding it to your Library…');
-  let { added, rest } = await trackInstall(b, before, item.name, true);
-  if (!added.length) {
-    const pick = rest.find((r) => item.match?.test(r.exe)) || rest[0];
-    if (pick) added = [addApp({ bottleId: b.id, exe: pick.exe, name: item.name })];
+  const { added, rest } = await trackInstall(b, before, item.name, true, item.match);
+  const match = item.match || /$^/;
+  let main = added.find((a) => match.test(a.exe));
+  if (!main) {
+    // Already in the Library (reinstalled over itself), or installed deeper than the usual scan.
+    const apps = store.get().apps.filter((a) => a.bottleId === b.id);
+    main = apps.find((a) => a.catalogId === item.id && fs.existsSync(a.exe)) || apps.find((a) => match.test(a.exe) && fs.existsSync(a.exe));
+    const exe = !main && (rest.find((r) => match.test(r.exe))?.exe || (item.match && findMatching(b.id, item.match)[0]));
+    if (exe) main = addApp({ bottleId: b.id, exe, name: item.name });
   }
-  const main = added.find((a) => item.match?.test(a.exe)) || added[0];
-  if (!main) throw new Error(`${item.name} didn’t finish installing. Check the Console for details.`);
+  if (!main) main = added[0] || (rest[0] && addApp({ bottleId: b.id, exe: rest[0].exe, name: item.name }));
+  if (!main) {
+    // The cached installer may be damaged; download it again next time.
+    if (code && code !== 3010) fs.rmSync(file, { force: true });
+    throw new Error(`${item.name} didn’t finish installing. Check the Console for details.`);
+  }
   main.catalogId = item.id;
   main.name = item.name;
   store.save();
@@ -600,7 +741,11 @@ async function fixCommonProblems(appId, onProgress) {
 
 function removeApp(id) {
   const s = store.get();
-  s.apps = s.apps.filter((a) => a.id !== id);
+  const a = s.apps.find((x) => x.id === id);
+  // Remember removed Steam games so the next Steam launch doesn't import them again.
+  const b = a?.steamAppId && s.bottles.find((x) => x.id === a.bottleId);
+  if (b && !/steam\.exe$/i.test(a.exe)) b.removedSteam = [...new Set([...(b.removedSteam || []), String(a.steamAppId)])];
+  s.apps = s.apps.filter((x) => x.id !== id);
   store.save();
 }
 
@@ -643,13 +788,14 @@ function migrateSteamArgs() {
 
 // Common fix for Steam that can't connect or update: stop it, clear its
 // downloaded client package and web cache so it re-downloads cleanly, then relaunch.
-async function repairSteam() {
+async function repairSteam(onProgress = () => {}) {
   const st = steamStatus();
   if (!st.installed) throw new Error('Steam isn’t installed');
   const b = bottle(st.bottleId);
   await kill(b.id).catch(() => {});
   const root = path.dirname(findSteam(b));
   for (const d of ['package', 'appcache/httpcache', 'config/htmlcache']) fs.rmSync(path.join(root, d), { recursive: true, force: true });
+  await prefetchSteamClient(root, onProgress);
   if (b.winver !== 'win10' && b.winver !== 'win11') await setWinver(b.id, 'win10');
   const id = readdSteam();
   const a = store.get().apps.find((x) => x.id === id);
@@ -659,35 +805,146 @@ async function repairSteam() {
   return launch({ bottleId: b.id, file: a.exe, args: a.args, appId: a.id, name: 'Steam' });
 }
 
-// The folder an app was installed into, if Umbra can safely remove it.
-function uninstallTarget(exe) {
-  const m = exe.match(/^(.*[\\/]steamapps[\\/]common[\\/][^\\/]+)[\\/]/i)
-    || exe.match(/^(.*[\\/]drive_c[\\/](?:Program Files(?: \(x86\))?|Games|GOG Games)[\\/][^\\/]+)[\\/]/i)
-    || exe.match(/^(.*[\\/]AppData[\\/]Local[\\/]Programs[\\/][^\\/]+)[\\/]/i);
-  return m ? m[1] : null;
+const norm = (n) => n.toLowerCase().replace(/[^a-z0-9]/g, '');
+const related = (x, y) => { x = norm(x); y = norm(y); return x.length >= 3 && y.length >= 3 && (x.startsWith(y) || y.startsWith(x)); };
+
+function readDir(dir) {
+  try { return fs.readdirSync(dir, { withFileTypes: true }); } catch { return []; }
 }
 
+// Whether a folder holds a real program (not an uninstaller or helper) within a few levels.
+function hasExe(dir, depth = 3) {
+  for (const e of readDir(dir)) {
+    if (e.isFile() && /\.exe$/i.test(e.name) && !SKIP_EXE.test(e.name)) return true;
+    if (e.isDirectory() && depth > 0 && hasExe(path.join(dir, e.name), depth - 1)) return true;
+  }
+  return false;
+}
+
+// Child folders of `dir` that look like separate programs (skipping `except`).
+function otherProgramsIn(dir, except, out = [], depth = 2) {
+  for (const e of readDir(dir)) {
+    if (!e.isDirectory() || e.name === except) continue;
+    const p = path.join(dir, e.name);
+    if (CONTAINER_DIR.test(e.name)) { if (depth > 0) otherProgramsIn(p, null, out, depth - 1); continue; }
+    if (ARCH_DIR.test(e.name) || PART_DIR.test(e.name) || related(e.name, path.basename(dir))) continue;
+    if (hasExe(p)) out.push(p);
+  }
+  return out;
+}
+
+// Whether a folder on the way down to the exe also holds other programs (or
+// programs' exes) beside the folder `next` that leads to ours.
+function holdsOthers(dir, next, exe) {
+  if (otherProgramsIn(dir, next, [], 0).length) return true;
+  return readDir(dir).some((e) => e.isFile() && /\.exe$/i.test(e.name) && !SKIP_EXE.test(e.name)
+    && !related(path.parse(e.name).name, next) && !related(path.parse(e.name).name, path.parse(exe).name));
+}
+
+// The folder an app was installed into, if Umbra can safely remove it. Starts at
+// the first folder under Program Files (or Games, AppData/Local/Programs) and goes
+// deeper past publisher folders (Epic Games, Rockstar Games, Ubisoft/…/games) that
+// also hold other programs, but not into the program's own bin/x64 folders.
+function uninstallTarget(exe) {
+  const steam = exe.match(/^(.*[\\/]steamapps[\\/]common[\\/][^\\/]+)[\\/]/i);
+  if (steam) return steam[1];
+  const m = exe.match(/^(.*[\\/]drive_c[\\/](?:Program Files(?: \(x86\))?|Games|GOG Games))[\\/]([^\\/]+)[\\/]/i)
+    || exe.match(/^(.*[\\/]AppData[\\/]Local[\\/]Programs)[\\/]([^\\/]+)[\\/]/i);
+  if (!m) return null;
+  const root = m[1];
+  const levels = [path.join(root, m[2])];
+  const rest = path.relative(levels[0], path.dirname(exe)).split(path.sep).filter(Boolean);
+  if (rest.includes('..')) return null;
+  for (const part of rest) levels.push(path.join(levels[levels.length - 1], part));
+  const k = levels.length - 1;
+  let stop = k;
+  for (let i = 0; i < k; i++) if (ARCH_DIR.test(path.basename(levels[i + 1]))) { stop = i; break; }
+  let pick = 0;
+  for (let i = 0; i < stop; i++) if (holdsOthers(levels[i], path.basename(levels[i + 1]), exe)) pick = i + 1;
+  for (let i = 0; i < k; i++) if (CONTAINER_DIR.test(path.basename(levels[i])) || SKIP_DIR.test(path.basename(levels[i]))) pick = Math.max(pick, i + 1);
+  const dir = levels[Math.min(pick, k)];
+  const name = path.basename(dir);
+  if (path.dirname(dir) === dir || /^drive_c$/i.test(name) || CONTAINER_DIR.test(name) || SKIP_DIR.test(name) || path.relative(root, dir).startsWith('..') || dir === root) return null;
+  return dir;
+}
+
+// What uninstalling an app would delete. `otherPrograms` lists other programs
+// found in that folder (by folder name), `exeCount` how many programs it holds.
 function uninstallInfo(id) {
   const a = store.get().apps.find((x) => x.id === id);
   if (!a) throw new Error('App not found');
   const dir = a.category === 'tool' ? null : uninstallTarget(a.exe);
   const inside = dir ? store.get().apps.filter((x) => x.id !== a.id && x.exe.startsWith(dir + path.sep)) : [];
-  return { app: a, dir, alsoRemoves: inside.map((x) => x.name) };
+  const others = [];
+  if (dir) {
+    const steps = path.relative(dir, path.dirname(a.exe)).split(path.sep).filter(Boolean);
+    let cur = dir;
+    for (const next of [...steps, null]) {
+      otherProgramsIn(cur, next, others);
+      if (next) cur = path.join(cur, next);
+    }
+  }
+  const exes = [];
+  if (dir) walk(dir, 6, exes);
+  return {
+    app: a, dir, alsoRemoves: inside.map((x) => x.name),
+    otherPrograms: [...new Set(others.map((p) => path.basename(p)))],
+    exeCount: exes.length,
+  };
 }
 
 // Deletes an installed program (and any Library entries inside its folder).
 async function uninstallApp(id) {
   const { app: a, dir } = uninstallInfo(id);
   if (!dir) throw new Error(`${a.name} can’t be uninstalled automatically. You can still remove it from your Library.`);
-  for (const r of running.values()) if (r.appId === a.id || (r.exe || '').startsWith(dir)) r.child.kill('SIGKILL');
+  for (const r of running.values()) if (r.appId === a.id || (r.exe || '').startsWith(dir + path.sep)) r.child.kill('SIGKILL');
   if (/steam\.exe$/i.test(a.exe)) await kill(a.bottleId).catch(() => {});
   fs.rmSync(dir, { recursive: true, force: true });
+  // Steam would otherwise still list the game as installed (and Umbra re-import it).
+  const sa = dir.match(/^(.*[\\/]steamapps)[\\/]common[\\/][^\\/]+$/i);
+  if (sa) {
+    const appid = a.steamAppId || steamlib.gameForExe(a.exe)?.appid;
+    if (appid && /^\d+$/.test(String(appid))) fs.rmSync(path.join(sa[1], `appmanifest_${appid}.acf`), { force: true });
+  }
   const s = store.get();
   const gone = s.apps.filter((x) => x.id === a.id || x.exe.startsWith(dir + path.sep));
   s.apps = s.apps.filter((x) => !gone.includes(x));
   store.save();
   log(`Uninstalled ${a.name} (${dir})`);
   return gone.map((x) => x.name);
+}
+
+// Steam's first-run updater can stall on its first download under Wine, so the
+// client packages are fetched here first and it only has to check and unpack
+// them. Best effort: on any failure Steam downloads them itself as before.
+async function prefetchSteamClient(root, onProgress = () => {}) {
+  try {
+    const res = await fetch(`${STEAM_CLIENT_CDN}steam_client_win32`, { headers: { 'User-Agent': 'Umbra' }, signal: AbortSignal.timeout(60000) });
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    const manifest = await res.text();
+    const pkgs = steamlib.clientPackages(manifest);
+    if (!pkgs.length) throw new Error('its manifest listed no packages');
+    const dir = path.join(root, 'package');
+    fs.mkdirSync(dir, { recursive: true });
+    const total = pkgs.reduce((n, p) => n + p.size, 0) || 1;
+    let done = 0;
+    for (const p of pkgs) {
+      const dest = path.join(dir, p.file);
+      const label = `Downloading Steam (${p.name})…`;
+      if (!fs.existsSync(dest) || !fs.statSync(dest).size) {
+        await engine.download(STEAM_CLIENT_CDN + p.file, dest, (f) => onProgress(Math.min(1, (done + (f ?? 0) * p.size) / total), label),
+          { signal: AbortSignal.timeout(15 * 60000) });
+      }
+      done += p.size;
+      onProgress(Math.min(1, done / total), label);
+    }
+    fs.writeFileSync(path.join(dir, 'steam_client_win32.manifest'), manifest);
+    log(`Downloaded Steam’s ${pkgs.length} client packages ahead of its first launch`);
+    return true;
+  } catch (e) {
+    log(`Couldn’t download Steam’s update ahead of time (${e.message}). Steam will download it itself.`, 'warn');
+    return false;
+  }
 }
 
 let steamInstall = null;
@@ -713,7 +970,11 @@ async function doInstallSteam(onProgress) {
   await wineRun(b, [setup, '/S'], { tag: 'SteamSetup' });
   await waitServer(b);
   const exe = findSteam(b);
-  if (!exe) throw new Error('Steam installer finished but steam.exe was not found. Check the Console for details.');
+  if (!exe) {
+    fs.rmSync(setup, { force: true });
+    throw new Error('Steam installer finished but steam.exe was not found. Check the Console for details.');
+  }
+  await prefetchSteamClient(path.dirname(exe), (f, label) => onProgress(0.7 + f * 0.28, label));
   let a = s.apps.find((x) => x.exe === exe);
   if (!a) a = addApp({ bottleId: b.id, exe, name: 'Steam', args: STEAM_ARGS });
   onProgress(1, 'Steam is installed');
@@ -721,6 +982,7 @@ async function doInstallSteam(onProgress) {
 }
 
 module.exports = {
-  init, setEngine, getEngine, createBottle, deleteBottle, setWinver, setRetina, launch, runningList, stop, kill,
+  init, setEngine, getEngine, createBottle, deleteBottle, setWinver, setRetina, launch, runningList, runningIn, creditPlaytime, stop, kill,
+  uninstallTarget, splitArgs, prefetchSteamClient,
   tool, driveC, scan, isInstaller, readdSteam, migrateSteamArgs, repairSteam, uninstallInfo, uninstallApp, mainBottle, addWindowsTools, storeStatus, installFromStore, fixCommonProblems, createMacLauncher, installComponent, runWinetricks, setDxvk, addApp, refreshIcons, importSteamGames, updateApp, removeApp, runApp, steamStatus, installSteam, prefixOf, bottle,
 };

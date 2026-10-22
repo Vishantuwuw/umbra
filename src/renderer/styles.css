@@ -244,7 +244,7 @@ select.input { appearance: none; background-image: linear-gradient(45deg, transp
 .task .d { color: var(--faint); font-size: 11.5px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; margin-bottom: 10px; }
 .track { height: 4px; border-radius: 4px; background: rgba(255,255,255,.08); overflow: hidden; }
 .track i { display: block; height: 100%; border-radius: 4px; background: var(--grad); box-shadow: 0 0 10px rgba(139,92,246,.8); transition: width .3s ease; }
-#toasts { position: fixed; left: 50%; bottom: 24px; transform: translateX(-50%); z-index: 80; display: flex; flex-direction: column; align-items: center; gap: 8px; }
+#toasts { position: fixed; left: 50%; bottom: 24px; transform: translateX(-50%); z-index: 110; display: flex; flex-direction: column; align-items: center; gap: 8px; }
 .toast { display: flex; align-items: center; gap: 10px; padding: 11px 16px; border-radius: 12px; background: #111115; border: 1px solid var(--line-2); box-shadow: 0 16px 40px rgba(0,0,0,.6); animation: rise .2s ease; max-width: 560px; }
 .toast.error { border-color: rgba(248,113,113,.4); }
 .toast.error svg { color: var(--red); }
@@ -402,3 +402,75 @@ select.input { appearance: none; background-image: linear-gradient(45deg, transp
 /* Keep the Steam card readable on small windows: text above the decorative orb. */
 .steam-hero > :not(.orb) { position: relative; z-index: 1; }
 @media (max-width: 1150px) { .steam-hero .orb { right: -80px; opacity: .35; } }
+
+/* Accounts: sign-in gate */
+.auth { position: fixed; inset: 0; z-index: 100; display: flex; flex-direction: column; align-items: center; justify-content: safe center; padding: 40px 30px 60px; overflow-y: auto;
+  background: radial-gradient(70% 60% at 50% 0%, rgba(139,92,246,.18), transparent 60%), radial-gradient(60% 50% at 50% 100%, rgba(34,211,238,.08), transparent 60%), #000; animation: fadein .25s ease; -webkit-app-region: drag; }
+.auth-card { width: 400px; max-width: 100%; text-align: center; display: flex; flex-direction: column; align-items: center; -webkit-app-region: no-drag; animation: rise .3s ease; user-select: text; }
+.auth-card h1 { font-size: 30px; letter-spacing: -.03em; margin: 22px 0 8px; }
+.auth-card h2 { font-size: 24px; letter-spacing: -.02em; margin: 20px 0 8px; }
+.auth-card > p { color: var(--muted); font-size: 14px; margin-bottom: 24px; max-width: 380px; }
+.auth-card > p b { color: var(--text); }
+.auth-providers { width: 100%; display: flex; flex-direction: column; gap: 10px; }
+.auth-provider { width: 100%; justify-content: center; background: #0d0d10; border-color: var(--line-2); }
+.auth-provider:hover { background: #16161b; border-color: rgba(255,255,255,.24); }
+.brand-ic { width: 18px; height: 18px; stroke: none; }
+.auth-or { width: 100%; display: flex; align-items: center; gap: 12px; margin: 20px 0 16px; color: var(--faint); font-size: 12px; }
+.auth-or::before, .auth-or::after { content: ''; flex: 1; height: 1px; background: var(--line-2); }
+.auth-form { width: 100%; display: flex; flex-direction: column; gap: 10px; }
+.auth-form .input { height: 46px; font-size: 14px; }
+.auth-form .btn { width: 100%; justify-content: center; margin-top: 4px; }
+.auth-err { text-align: left; font-size: 12.5px; color: var(--red); background: rgba(248,113,113,.08); border: 1px solid rgba(248,113,113,.25); border-radius: 10px; padding: 9px 12px; }
+.auth-links { display: flex; flex-direction: column; gap: 8px; margin-top: 18px; font-size: 12.5px; }
+.auth-links button { color: var(--muted); }
+.auth-links button:hover { color: var(--text); }
+.auth-links b { color: var(--violet-2); font-weight: 600; }
+.auth-id { font-size: 11.5px; margin: -8px 0 24px; }
+.eclipse.banned .corona { background: conic-gradient(from 0deg, #ef4444, #f97316, transparent 40%, #ef4444 70%, transparent 85%, #ef4444); }
+.eclipse.banned .ring { background: conic-gradient(from 90deg, rgba(255,255,255,.9), rgba(248,113,113,.7), transparent 35%, transparent 65%, rgba(249,115,22,.7), rgba(255,255,255,.9)); }
+
+/* Account chip, settings card, tags */
+.avatar { position: relative; width: 28px; height: 28px; flex: none; border-radius: 50%; overflow: hidden; display: grid; place-items: center; background: var(--grad); }
+.avatar b { font-size: 12px; color: #fff; }
+.avatar img { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; }
+.avatar.lg { width: 42px; height: 42px; }
+.avatar.lg b { font-size: 16px; }
+.pill.account { align-items: center; }
+.pill.account > div { min-width: 0; }
+.tag-admin, .tag-ban, .tag-you { display: inline-block; vertical-align: 1px; font-size: 9.5px; font-weight: 700; letter-spacing: .06em; text-transform: uppercase; border-radius: 5px; padding: 1px 5px; margin-left: 4px; }
+.tag-admin { color: var(--violet-2); border: 1px solid rgba(167,139,250,.45); }
+.tag-ban { color: var(--red); border: 1px solid rgba(248,113,113,.45); }
+.tag-you { color: var(--cyan); border: 1px solid rgba(34,211,238,.4); }
+.account-card { display: flex; align-items: center; gap: 16px; margin-bottom: 18px; }
+.account-card .grow { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 2px; }
+.account-card .grow b { font-size: 15px; }
+.account-card .grow span { color: var(--muted); font-size: 12.5px; }
+.account-card .grow .faint { font-size: 11px; }
+
+/* Admin panel */
+.admin-stats { display: grid; grid-template-columns: repeat(4, 1fr); gap: 14px; }
+.admin-stat { padding: 18px 20px; display: flex; flex-direction: column; gap: 2px; }
+.admin-stat b { font-size: 28px; letter-spacing: -.03em; font-variant-numeric: tabular-nums; }
+.admin-stat span { color: var(--muted); font-size: 12px; }
+.admin-stat.red b { color: var(--red); }
+.admin-users { display: flex; flex-direction: column; gap: 12px; }
+.admin-user { padding: 16px 18px; }
+.admin-user.is-banned { border-color: rgba(248,113,113,.3); background: linear-gradient(90deg, rgba(248,113,113,.06), transparent 50%), var(--panel); }
+.admin-user-head { display: flex; align-items: center; gap: 14px; }
+.admin-user-head .grow { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 2px; }
+.admin-user-head .grow b { font-size: 14px; }
+.admin-user-head .grow span { color: var(--muted); font-size: 12px; }
+.ban-reason { color: var(--red) !important; }
+.admin-devices { margin-top: 12px; border-top: 1px solid var(--line); padding-top: 8px; display: flex; flex-direction: column; }
+.admin-device { display: flex; align-items: center; gap: 10px; padding: 7px 4px; font-size: 12.5px; border-radius: 8px; }
+.admin-device > svg { color: var(--faint); }
+.admin-device .mono { font-size: 12px; }
+.admin-device .grow { flex: 1; }
+.admin-device.is-banned .mono { color: var(--red); }
+.admin-bans { padding: 8px 14px; }
+.admin-nodev { padding: 8px 4px 0; font-size: 12px; }
+.btn.danger-solid { background: #dc2626; border-color: #dc2626; color: #fff; }
+.btn.danger-solid:hover { background: #ef4444; }
+.check-row { display: flex; gap: 10px; align-items: flex-start; font-size: 12.5px; color: var(--muted); margin: -4px 0 16px; cursor: pointer; }
+.check-row input { margin-top: 2px; accent-color: var(--violet); }
+.top-actions .search input#admin-search { width: 220px; }

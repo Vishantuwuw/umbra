@@ -123,11 +123,14 @@ async function version(bin) {
   }
 }
 
-async function detect(customPath) {
+// With strict, a custom path that isn't a runnable Wine returns null instead of
+// falling back to whatever engine is found automatically.
+async function detect(customPath, { strict = false } = {}) {
   if (customPath && isExecutable(customPath)) {
     const known = candidates().find((c) => c.find() === customPath);
     return describe(customPath, known ? known.source : 'Custom');
   }
+  if (customPath && strict) return null;
   for (const c of candidates()) {
     const p = c.find();
     if (p) return describe(p, c.source);
@@ -161,23 +164,36 @@ function installRosetta() {
   return exec('/usr/bin/osascript', ['-e', script], { timeout: 15 * 60 * 1000 });
 }
 
-async function download(url, dest, onProgress) {
-  const res = await fetch(url, { headers: { 'User-Agent': 'Umbra' }, redirect: 'follow' });
+let partSeq = 0;
+
+// Each download writes its own temp file, so two downloads of the same file can't mix.
+async function download(url, dest, onProgress, { signal } = {}) {
+  const res = await fetch(url, { headers: { 'User-Agent': 'Umbra' }, redirect: 'follow', signal });
   if (!res.ok || !res.body) throw new Error(`Download failed (HTTP ${res.status})`);
   const total = Number(res.headers.get('content-length')) || 0;
-  const part = `${dest}.part`;
+  const whole = !res.headers.get('content-encoding');
+  const part = `${dest}.${process.pid}-${++partSeq}.part`;
   const out = fs.createWriteStream(part);
+  let failed = null;
+  const failure = new Promise((_, reject) => out.on('error', (e) => { failed = e; reject(e); }));
+  failure.catch(() => {});
   let received = 0;
   try {
     for await (const chunk of res.body) {
+      if (failed) throw failed;
       received += chunk.length;
-      if (!out.write(chunk)) await new Promise((r) => out.once('drain', r));
+      if (!out.write(chunk)) await Promise.race([new Promise((r) => out.once('drain', r)), failure]);
       onProgress?.(total ? received / total : null, received, total);
     }
-  } finally {
-    await new Promise((r) => out.end(r));
+    await Promise.race([new Promise((r) => out.end(r)), failure]);
+    if (failed) throw failed;
+    if (whole && total && received < total) throw new Error(`Download was cut off (${received} of ${total} bytes)`);
+    fs.renameSync(part, dest);
+  } catch (e) {
+    out.destroy();
+    fs.rmSync(part, { force: true });
+    throw e;
   }
-  fs.renameSync(part, dest);
   return dest;
 }
 
@@ -231,8 +247,16 @@ async function latestRelease() {
   }
 }
 
+let engineInstall = null;
+
+// Setup and the Engine page can both start an install; share one instead of racing.
+function install(onProgress) {
+  engineInstall ||= doInstall(onProgress).finally(() => { engineInstall = null; });
+  return engineInstall;
+}
+
 // Downloads and unpacks the latest Wine build into Umbra's own engine folder.
-async function install(onProgress) {
+async function doInstall(onProgress) {
   if (process.platform !== 'darwin') {
     throw new Error('Automatic engine install is macOS-only. Install Wine with your package manager instead.');
   }
@@ -250,10 +274,19 @@ async function install(onProgress) {
   const staging = `${dir}.new`;
   fs.rmSync(staging, { recursive: true, force: true });
   fs.mkdirSync(staging, { recursive: true });
-  await exec('/usr/bin/tar', ['-xJf', archive, '-C', staging], { timeout: 10 * 60 * 1000 });
+  try {
+    await exec('/usr/bin/tar', ['-xJf', archive, '-C', staging], { timeout: 10 * 60 * 1000 });
+  } catch (e) {
+    fs.rmSync(archive, { force: true });
+    fs.rmSync(staging, { recursive: true, force: true });
+    throw new Error(`Could not unpack the engine download, so it was deleted. Try again. (${e.message})`);
+  }
   onProgress(0.95, 'Finishing up…');
   await exec('/usr/bin/xattr', ['-dr', 'com.apple.quarantine', staging]).catch(() => {});
-  if (!findWineIn(staging)) throw new Error('The downloaded engine did not contain a Wine binary');
+  if (!findWineIn(staging)) {
+    fs.rmSync(archive, { force: true });
+    throw new Error('The downloaded engine did not contain a Wine binary');
+  }
   fs.rmSync(dir, { recursive: true, force: true });
   fs.renameSync(staging, dir);
   fs.rmSync(archive, { force: true });
