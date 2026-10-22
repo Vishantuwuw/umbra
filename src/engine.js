@@ -181,6 +181,13 @@ async function download(url, dest, onProgress) {
   return dest;
 }
 
+// Which Wine build flavor to prefer; UMBRA_ENGINE_FLAVOR=devel|staging puts that one first.
+function flavorOrder() {
+  const order = ['stable', 'staging', 'devel'];
+  const want = process.env.UMBRA_ENGINE_FLAVOR;
+  return order.includes(want) ? [want, ...order.filter((f) => f !== want)] : order;
+}
+
 // Picks the newest Wine Stable build, falling back to Staging/Devel if a
 // recent stable one is not published.
 async function githubRelease() {
@@ -189,7 +196,7 @@ async function githubRelease() {
   const res = await fetch(RELEASES_API, { headers });
   if (!res.ok) throw new Error(`GitHub release feed returned HTTP ${res.status}`);
   const releases = (await res.json()).filter((r) => !r.draft);
-  for (const re of [/^wine-stable-.*\.tar\.xz$/, /^wine-staging-.*\.tar\.xz$/, /^wine-devel-.*\.tar\.xz$/, /\.tar\.xz$/]) {
+  for (const re of flavorOrder().map((f) => new RegExp(`^wine-${f}-.*\\.tar\\.xz$`)).concat([/\.tar\.xz$/])) {
     for (const rel of releases) {
       const asset = (rel.assets || []).find((a) => re.test(a.name));
       if (asset) return { tag: rel.tag_name, name: asset.name, url: asset.browser_download_url, size: asset.size };
@@ -201,7 +208,7 @@ async function githubRelease() {
 // Homebrew's cask index points at the same builds and is not rate-limited
 // like the anonymous GitHub API.
 async function brewRelease() {
-  for (const cask of ['wine-stable', 'wine@staging', 'wine@devel']) {
+  for (const cask of flavorOrder().map((f) => (f === 'stable' ? 'wine-stable' : `wine@${f}`))) {
     try {
       const res = await fetch(`${BREW_CASK_API}/${cask}.json`, { headers: { 'User-Agent': 'Umbra' } });
       if (!res.ok) continue;

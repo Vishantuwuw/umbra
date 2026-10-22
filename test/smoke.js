@@ -117,6 +117,12 @@ app.whenReady().then(async () => {
           console.log(`----- Steam ${f} (last lines) -----\n${txt}`);
         } catch {}
       }
+      const read = (f) => { try { return require('fs').readFileSync(path.join(logs, f), 'utf8'); } catch { return ''; } };
+      const cef = read('cef_log.txt');
+      const pollFails = (cef.match(/Failed to poll auth session/g) || []).length;
+      const netFails = (cef.match(/ERR_FAILED/g) || []).length;
+      const connected = /\[Connected/.test(read('connection_log.txt'));
+      console.log(`STEAM SUMMARY: engine=${eng.version} connected=${connected} signInPollFailures=${pollFails} cefNetErrors=${netFails} -> ${connected && !pollFails ? 'SIGN-IN OK' : 'SIGN-IN BROKEN'}`);
       await runtime.kill(b.id);
     } catch (e) { console.log(`WARN: Steam test failed: ${e.message}`); }
   }

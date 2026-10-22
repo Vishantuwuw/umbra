@@ -1,0 +1,31 @@
+name: Steam test
+
+# Manual experiment: runs the full smoke test, including installing and launching
+# Steam, once per Wine build flavor so Steam's sign-in can be compared.
+on: workflow_dispatch
+
+jobs:
+  steam:
+    name: Steam on ${{ matrix.flavor }} Wine
+    strategy:
+      fail-fast: false
+      matrix:
+        flavor: [stable, devel]
+    runs-on: macos-latest
+    timeout-minutes: 50
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - name: Ensure Rosetta 2
+        run: sudo softwareupdate --install-rosetta --agree-to-license || true
+      - name: Smoke test with Steam
+        env:
+          UMBRA_HOME: ${{ runner.temp }}/umbra-home
+          SHOTS_DIR: ${{ runner.temp }}
+          GITHUB_TOKEN: ${{ github.token }}
+          UMBRA_ENGINE_FLAVOR: ${{ matrix.flavor }}
+        run: npx electron test/smoke.js
