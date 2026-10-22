@@ -67,3 +67,17 @@ Each push to `main` runs a GitHub Actions job on a real Mac. That job installs t
 | `src/renderer/` | The UI (`index.html`, `app.js`, `styles.css`) and loading screen (`splash.html`) |
 
 Umbra data lives in `~/Library/Application Support/Umbra` (bottles, engine, library).
+
+## Credits
+
+**Made by Vini.**
+
+Umbra is built on these open-source projects:
+
+- [Wine](https://www.winehq.org): the compatibility layer that runs Windows programs
+- [Gcenx macOS Wine builds](https://github.com/Gcenx/macOS_Wine_builds): the prebuilt Wine for macOS that Umbra installs
+- [DXVK-macOS](https://github.com/Gcenx/DXVK-macOS): DirectX 10/11 → Vulkan translation
+- [MoltenVK](https://github.com/KhronosGroup/MoltenVK): Vulkan on Apple Metal
+- [Winetricks](https://github.com/Winetricks/winetricks): extra Windows components
+- [Electron](https://www.electronjs.org): the app framework
+- [Inter](https://rsms.me/inter/): typeface by Rasmus Andersson

@@ -315,8 +315,26 @@ function viewEngine() {
       ${toggle('metalHud', 'Metal Performance HUD', 'FPS & GPU overlay for Metal-rendered games.')}
       ${toggle('verboseLogs', 'Verbose logging', 'Show Wine warnings in the Console for debugging.')}
     </div>
+  </div>
+  <div class="card engine-card credits">
+    <h3>Credits</h3>
+    <div class="credit-hero"><div class="mark"><i></i></div><div><b>Umbra v${esc(S.version)}</b><span>Made by Vini</span></div></div>
+    <p class="muted">Umbra stands on the shoulders of these open-source projects:</p>
+    <ul class="credit-list">
+      ${CREDITS.map(([name, what, url]) => `<li><button class="credit-link" data-act="open-url" data-url="${url}">${esc(name)}</button><span>${esc(what)}</span></li>`).join('')}
+    </ul>
   </div>`;
 }
+
+const CREDITS = [
+  ['Wine', 'The compatibility layer that runs Windows programs', 'https://www.winehq.org'],
+  ['Gcenx macOS Wine builds', 'Prebuilt Wine for macOS that Umbra installs', 'https://github.com/Gcenx/macOS_Wine_builds'],
+  ['DXVK-macOS', 'DirectX 10/11 to Vulkan translation', 'https://github.com/Gcenx/DXVK-macOS'],
+  ['MoltenVK', 'Vulkan on Apple Metal', 'https://github.com/KhronosGroup/MoltenVK'],
+  ['Winetricks', 'Extra Windows components', 'https://github.com/Winetricks/winetricks'],
+  ['Electron', 'The app framework', 'https://www.electronjs.org'],
+  ['Inter', 'Typeface by Rasmus Andersson', 'https://rsms.me/inter/'],
+];
 
 // ---------- Console ----------
 function viewConsole() {
@@ -609,6 +627,7 @@ const actions = {
     if (names.length) go('library');
   },
   'open-update': () => call('open:external', S.update.url),
+  'open-url': (el) => call('open:external', el.dataset.url),
   toggle: (el) => call('settings:set', { [el.dataset.key]: !S.settings[el.dataset.key] }),
   'clear-logs': async () => { await call('logs:clear'); logs = []; paintLogs(); },
 };
