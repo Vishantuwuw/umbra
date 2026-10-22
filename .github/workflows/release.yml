@@ -91,8 +91,24 @@ jobs:
           git push -f origin "refs/tags/$TAG"
           if gh release view "$TAG" >/dev/null 2>&1; then
             gh release edit "$TAG" --title "Umbra $TAG" --notes-file "$RUNNER_TEMP/notes.md"
-            gh release upload "$TAG" dist/*.dmg dist/*.zip docs/screenshots/*.png --clobber
+            gh release upload "$TAG" dist/*.dmg dist/*.zip --clobber
           else
-            gh release create "$TAG" dist/*.dmg dist/*.zip docs/screenshots/*.png --verify-tag --latest \
+            gh release create "$TAG" dist/*.dmg dist/*.zip --verify-tag --latest \
               --title "Umbra $TAG" --notes-file "$RUNNER_TEMP/notes.md"
           fi
+      - name: Keep screenshots out of releases
+        if: github.ref == 'refs/heads/main'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          # Screenshots live in the README; releases only carry the app downloads.
+          for tag in $(gh release list --limit 100 --json tagName -q '.[].tagName'); do
+            for asset in $(gh release view "$tag" --json assets -q '.assets[].name' | grep -i '\.png$' || true); do
+              gh release delete-asset "$tag" "$asset" -y
+            done
+            body=$(gh release view "$tag" --json body -q .body)
+            if printf '%s' "$body" | grep -q '^## Screenshots'; then
+              printf '%s\n' "$body" | sed '/^## Screenshots/,$d' > "$RUNNER_TEMP/old-notes.md"
+              gh release edit "$tag" --notes-file "$RUNNER_TEMP/old-notes.md"
+            fi
+          done
