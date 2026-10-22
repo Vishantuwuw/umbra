@@ -22,6 +22,9 @@ Then drop any `.exe` onto the window, or go to **Steam → Install Steam for Win
 **Library**
 ![Library](https://raw.githubusercontent.com/{{REPO}}/{{SHA}}/docs/screenshots/library-running.png)
 
+**Run an installer and the app is added to your Library automatically**
+![Installed app added](https://raw.githubusercontent.com/{{REPO}}/{{SHA}}/docs/screenshots/installer-added.png)
+
 **Bottles: separate Windows environments**
 ![Bottles](https://raw.githubusercontent.com/{{REPO}}/{{SHA}}/docs/screenshots/bottles.png)
 

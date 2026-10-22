@@ -15,7 +15,11 @@ app.whenReady().then(async () => {
   const engine = require('../src/engine');
   const runtime = require('../src/runtime');
   store.load();
-  runtime.init((type, p) => type === 'log' && console.log('  wine |', p.line));
+  let onInstalled = () => {};
+  runtime.init((type, p) => {
+    if (type === 'log') console.log('  wine |', p.line);
+    if (type === 'installed') onInstalled(p);
+  });
 
   console.log('cpu:', await engine.cpu());
   for (const src of ['githubRelease', 'brewRelease']) {
@@ -34,15 +38,23 @@ app.whenReady().then(async () => {
   runtime.setEngine(eng);
 
   const b = await runtime.createBottle({ name: 'Smoke Test', winver: 'win10' }, (f, l) => console.log(pct(f), l));
-  const exe = path.join(__dirname, 'hello.exe');
-  runtime.addApp({ bottleId: b.id, exe, name: 'Hello Windows' });
-  const run = runtime.launch({ bottleId: b.id, file: exe, name: 'hello.exe' });
+
+  // Run an installer; Umbra should add what it installed to the library.
+  const installed = new Promise((r) => { onInstalled = r; });
+  runtime.launch({ bottleId: b.id, file: path.join(__dirname, 'hello-setup.exe') });
+  const result = await Promise.race([installed, sleep(180000).then(() => null)]);
+  console.log('installed:', result);
+  const app_ = store.get().apps.find((a) => a.name === 'Hello App' && a.bottleId === b.id);
+  if (!app_) throw new Error('Installer ran but "Hello App" was not added to the library');
+  console.log('PASS: installer output was added to the library ->', app_.exe);
+
+  const run = runtime.runApp(app_.id);
   await sleep(25000);
   const alive = runtime.runningList().some((r) => r.runId === run.runId);
   try { execFileSync('/usr/sbin/screencapture', ['-x', path.join(shots, 'mac-exe-running.png')]); } catch (e) { console.log('screencapture failed:', e.message); }
   await runtime.kill(b.id);
   store.flush();
-  console.log(alive ? `PASS: hello.exe is running under Wine on ${process.platform}` : 'FAIL: hello.exe exited early');
+  console.log(alive ? `PASS: installed Hello App is running under Wine on ${process.platform}` : 'FAIL: Hello App exited early');
   app.exit(alive ? 0 : 1);
 }).catch((e) => {
   console.error(e);

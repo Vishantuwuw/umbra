@@ -3,6 +3,7 @@
 **Run Windows apps and games on your Mac.** Umbra is a CrossOver-style launcher with a dark UI. It runs Windows programs on macOS through [Wine](https://www.winehq.org/), the open-source compatibility layer that CrossOver is also built on.
 
 - **Drop any `.exe`** (or `.msi` / `.bat`) onto the window to run it. You can also double-click one in Finder (Open With → Umbra).
+- **Installers just work**: run any `setup.exe` or `.msi` and the program installs into that bottle. When it finishes, Umbra adds the installed app to your Library automatically, named after its Start Menu shortcut.
 - **Bottles**: isolated Windows 10/11/7/XP environments, each with its own C: drive and registry.
 - **One-click Steam**: downloads Valve's official Windows Steam installer into a dedicated bottle.
 - **Library**: saves your games and apps for one-click launching and tracks playtime.
@@ -15,6 +16,7 @@
 | ![Windows exe running on macOS](docs/screenshots/mac-exe-running.png) | ![Loading screen](docs/screenshots/loading-47.png) |
 | ![Library](docs/screenshots/library-running.png) | ![Bottles](docs/screenshots/bottles.png) |
 | ![Run dialog](docs/screenshots/run-dialog.png) | ![Steam](docs/screenshots/steam.png) |
+| ![Installer detected](docs/screenshots/installer-dialog.png) | ![Installed app added](docs/screenshots/installer-added.png) |
 | ![Engine](docs/screenshots/engine.png) | ![Console](docs/screenshots/console.png) |
 
 ## Install
@@ -40,10 +42,10 @@ Wine runs a lot of software, but not all of it:
 npm install
 npm start               # run the app
 npm run dist:mac        # build Umbra .dmg + .zip (on a Mac)
-npx electron test/smoke.js   # end-to-end: engine → bottle → run test/hello.exe
+npx electron test/smoke.js   # end-to-end: engine → bottle → installer → run installed app
 ```
 
-Each push to `main` runs a GitHub Actions job on a real Mac. That job installs the Wine engine, creates a bottle and runs `test/hello.exe`, then builds the app and publishes the `.dmg` and `.zip` files as release `v<version>`, using the version in `package.json`.
+Each push to `main` runs a GitHub Actions job on a real Mac. That job installs the Wine engine, creates a bottle, runs a test installer (`test/hello-setup.exe`), checks the installed app was added to the Library and runs it, then builds the app and publishes the `.dmg` and `.zip` files as release `v<version>`, using the version in `package.json`.
 
 ## How it works
 

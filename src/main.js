@@ -40,6 +40,9 @@ function onRuntimeEvent(type, payload) {
     send('log', payload);
   } else if (type === 'running') {
     pushState();
+  } else if (type === 'installed') {
+    pushState();
+    send('installed', payload);
   }
 }
 

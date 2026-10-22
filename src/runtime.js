@@ -10,6 +10,7 @@ const engine = require('./engine');
 const STEAM_SETUP_URL = 'https://cdn.akamai.steamstatic.com/client/installer/SteamSetup.exe';
 const STEAM_ARGS = '-cef-disable-gpu -cef-disable-sandbox';
 const SKIP_EXE = /(unins|uninstall|setup|install|update|crash|report|helper|redist|vcredist|dxsetup|dotnet|directx|notification|service|webhelper|7z|^winver|^cef)/i;
+const INSTALLER = /(setup|install|^inst[_-]|_inst\b)/i;
 const SKIP_DIR = /^(windows|common files|internet explorer|windows media player|windows nt|windowspowershell|microsoft\.net)$/i;
 
 let wine = null; // { path, version, source }
@@ -172,6 +173,8 @@ function launch({ bottleId, file, args = '', appId = null, name }) {
   if (!fs.existsSync(file)) throw new Error(`File not found: ${file}`);
   const runId = ++runSeq;
   const label = name || path.basename(file);
+  const installer = !appId && isInstaller(file);
+  const before = installer ? snapshot(b.id) : null;
   const child = spawn(bin, [...argsFor(file), ...splitArgs(args)], { env: wineEnv(b), cwd: path.dirname(file) });
   const entry = { runId, appId, bottleId, name: label, started: Date.now(), pid: child.pid };
   running.set(runId, { ...entry, child });
@@ -194,6 +197,7 @@ function launch({ bottleId, file, args = '', appId = null, name }) {
     }
     log(`■ ${label} exited (code ${code ?? '?'}) after ${secs}s`, code ? 'warn' : 'info');
     emit('running');
+    if (installer) trackInstall(b, before, label).catch((e) => log(`Could not detect installed apps: ${e.message}`, 'warn'));
   };
   child.on('exit', done);
   child.on('error', (e) => { log(`${label}: ${e.message}`, 'error'); done(-1); });
@@ -239,28 +243,85 @@ function driveC(bottleId) {
   return path.join(prefixOf(bottle(bottleId)), 'drive_c');
 }
 
-function walk(dir, depth, out) {
+function walk(dir, depth, out, ext = /\.exe$/i) {
   let entries = [];
   try { entries = fs.readdirSync(dir, { withFileTypes: true }); } catch { return; }
   for (const e of entries) {
     const p = path.join(dir, e.name);
-    if (e.isDirectory() && depth > 0 && !SKIP_DIR.test(e.name)) walk(p, depth - 1, out);
-    else if (e.isFile() && /\.exe$/i.test(e.name) && !SKIP_EXE.test(e.name)) out.push(p);
+    if (e.isDirectory() && depth > 0 && !SKIP_DIR.test(e.name)) walk(p, depth - 1, out, ext);
+    else if (e.isFile() && ext.test(e.name) && !SKIP_EXE.test(e.name)) out.push(p);
   }
+}
+
+function userDirs(c) {
+  try { return fs.readdirSync(path.join(c, 'users')).map((u) => path.join(c, 'users', u)); } catch { return []; }
+}
+
+// Every program in a bottle's usual install locations, including Steam games.
+function listExes(bottleId) {
+  const c = driveC(bottleId);
+  const found = [];
+  const pf = ['Program Files', 'Program Files (x86)'].map((r) => path.join(c, r));
+  for (const r of [...pf, path.join(c, 'Games'), path.join(c, 'GOG Games')]) walk(r, 3, found);
+  for (const r of pf) walk(path.join(r, 'Steam', 'steamapps', 'common'), 2, found);
+  for (const u of userDirs(c)) {
+    walk(path.join(u, 'AppData', 'Local', 'Programs'), 3, found);
+    walk(path.join(u, 'Desktop'), 1, found);
+  }
+  return [...new Set(found)];
+}
+
+// Start Menu and Desktop shortcuts, which installers create for their main programs.
+function listShortcuts(bottleId) {
+  const c = driveC(bottleId);
+  const found = [];
+  const menus = [path.join(c, 'ProgramData', 'Microsoft', 'Windows', 'Start Menu')];
+  for (const u of userDirs(c)) menus.push(path.join(u, 'AppData', 'Roaming', 'Microsoft', 'Windows', 'Start Menu'), path.join(u, 'Desktop'));
+  for (const m of menus) walk(m, 4, found, /\.lnk$/i);
+  return found;
 }
 
 // Finds programs that were installed into a bottle so they can be added to the library.
 function scan(bottleId) {
-  const c = driveC(bottleId);
-  const roots = ['Program Files', 'Program Files (x86)', 'Games', 'GOG Games'].map((r) => path.join(c, r));
-  const users = path.join(c, 'users');
-  try {
-    for (const u of fs.readdirSync(users)) roots.push(path.join(users, u, 'AppData', 'Local', 'Programs'), path.join(users, u, 'Desktop'));
-  } catch {}
-  const found = [];
-  for (const r of roots) walk(r, 3, found);
   const known = new Set(store.get().apps.map((a) => a.exe));
-  return found.filter((f) => !known.has(f)).map((exe) => ({ exe, name: prettyName(exe) }));
+  return listExes(bottleId).filter((f) => !known.has(f)).map((exe) => ({ exe, name: prettyName(exe) }));
+}
+
+function isInstaller(file) {
+  return /\.msi$/i.test(file) || INSTALLER.test(path.basename(file));
+}
+
+function snapshot(bottleId) {
+  return { exes: new Set(listExes(bottleId)), lnks: new Set(listShortcuts(bottleId)) };
+}
+
+// .lnk files store their target path as plain or UTF-16 text, so a name match is enough.
+function shortcutTargets(lnk, exe) {
+  let buf;
+  try { buf = fs.readFileSync(lnk); } catch { return false; }
+  const name = path.basename(exe).toLowerCase();
+  return buf.toString('latin1').toLowerCase().includes(name) || buf.toString('utf16le').toLowerCase().includes(name);
+}
+
+// After an installer finishes, adds what it installed to the library.
+async function trackInstall(b, before, label) {
+  log(`Installer finished — looking for what ${label} installed…`);
+  // Installers often hand off to child processes; wait for the bottle to go idle (capped,
+  // since "launch now" checkboxes can start the installed app right away).
+  await Promise.race([waitServer(b), new Promise((r) => setTimeout(r, 120000))]);
+  const known = new Set(store.get().apps.map((a) => a.exe));
+  const exes = listExes(b.id).filter((e) => !before.exes.has(e) && !known.has(e));
+  const lnks = listShortcuts(b.id).filter((l) => !before.lnks.has(l));
+  const picks = [];
+  for (const exe of exes) {
+    const lnk = lnks.find((l) => shortcutTargets(l, exe));
+    if (lnk) picks.push({ exe, name: path.basename(lnk, '.lnk') });
+  }
+  if (!picks.length && exes.length <= 2) picks.push(...exes.map((exe) => ({ exe, name: prettyName(exe) })));
+  const added = picks.slice(0, 5).map((p) => addApp({ bottleId: b.id, exe: p.exe, name: p.name }));
+  const rest = exes.filter((e) => !added.some((a) => a.exe === e)).map((exe) => ({ exe, name: prettyName(exe) }));
+  log(added.length ? `Added to Library: ${added.map((a) => a.name).join(', ')}` : `${exes.length} new program(s) found in “${b.name}”`);
+  emit('installed', { bottleId: b.id, installer: label, added: added.map((a) => a.name), candidates: added.length ? [] : rest });
 }
 
 function prettyName(exe) {
@@ -338,5 +399,5 @@ async function installSteam(onProgress) {
 
 module.exports = {
   init, setEngine, getEngine, createBottle, deleteBottle, setWinver, setRetina, launch, runningList, stop, kill,
-  tool, driveC, scan, addApp, updateApp, removeApp, runApp, steamStatus, installSteam, prefixOf, bottle,
+  tool, driveC, scan, isInstaller, addApp, updateApp, removeApp, runApp, steamStatus, installSteam, prefixOf, bottle,
 };

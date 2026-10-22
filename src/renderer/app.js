@@ -368,22 +368,25 @@ async function runFileFlow(file, presetBottle) {
   if (!(await ensureBottle().catch(() => false))) return;
   const def = presetBottle || S.settings.lastBottleId || S.bottles[0].id;
   const guess = basename(file).replace(/\.(exe|msi|bat|cmd|lnk)$/i, '');
+  const installer = /\.msi$/i.test(file) || /(setup|install|^inst[_-]|_inst\b)/i.test(basename(file));
   modal(`<h3>Run Windows program</h3><p>Choose where this program should run.</p>
     <div class="file-box"><div class="fi">${icon('file')}</div><div><b>${esc(basename(file))}</b><span>${esc(file)}</span></div></div>
     <div class="field"><label>Bottle</label><select class="input" id="m-bottle">${bottleOptions(def)}</select></div>
     <div class="field"><label>Arguments (optional)</label><input class="input" id="m-args" placeholder="-windowed"></div>
-    <label class="check"><input type="checkbox" id="m-add" ${/setup|install/i.test(guess) || /\.msi$/i.test(file) ? '' : 'checked'}><div><b>Add to Library</b><span>Keep it for one-click launching later</span></div></label>
+    ${installer
+      ? `<div class="file-box" style="background:rgba(139,92,246,.08);border-color:rgba(139,92,246,.3)"><div class="fi">${icon('download')}</div><div><b>Looks like an installer</b><span>Whatever it installs goes into this bottle, and Umbra adds it to your Library when it finishes.</span></div></div>`
+      : `<label class="check"><input type="checkbox" id="m-add" checked><div><b>Add to Library</b><span>Keep it for one-click launching later</span></div></label>`}
     <div class="modal-actions"><button class="btn ghost" data-close>Cancel</button><button class="btn primary" id="m-go">${icon('play')}Run</button></div>`,
   (el, close) => {
     $('#m-go', el).onclick = async () => {
       const bottleId = $('#m-bottle', el).value;
       const args = $('#m-args', el).value;
       close();
-      if ($('#m-add', el).checked) {
+      if ($('#m-add', el)?.checked) {
         const a = await call('app:add', { bottleId, exe: file, name: guess, args });
         await call('app:run', a.id);
       } else await call('run:file', { bottleId, file, args });
-      toast(`Launching ${basename(file)}`);
+      toast(installer ? `Installing into “${S.bottles.find((b) => b.id === bottleId)?.name}”…` : `Launching ${basename(file)}`);
     };
   });
 }
@@ -438,7 +441,11 @@ function editAppModal(a, isNew) {
 async function scanModal(bottleId) {
   const found = await call('bottle:scan', bottleId);
   if (!found.length) return toast('No new programs found in this bottle');
-  modal(`<h3>Found ${found.length} program${found.length === 1 ? '' : 's'}</h3><p>Select what to add to your Library.</p>
+  pickAppsModal(bottleId, found, `Found ${found.length} program${found.length === 1 ? '' : 's'}`, 'Select what to add to your Library.');
+}
+
+function pickAppsModal(bottleId, found, title, sub) {
+  modal(`<h3>${esc(title)}</h3><p>${esc(sub)}</p>
     <div style="max-height:320px;overflow:auto;margin-bottom:12px">${found.map((f, i) => `<label class="check"><input type="checkbox" data-i="${i}" ${i < 8 ? 'checked' : ''}><div><b>${esc(f.name)}</b><span>${esc(f.exe.split('drive_c').pop())}</span></div></label>`).join('')}</div>
     <div class="modal-actions"><button class="btn ghost" data-close>Cancel</button><button class="btn primary" id="m-go">Add Selected</button></div>`,
   (el, close) => {
@@ -590,6 +597,16 @@ api.on('log', (l) => {
     const stick = el.scrollTop + el.clientHeight >= el.scrollHeight - 30;
     el.insertAdjacentHTML('beforeend', logLine(l));
     if (stick) el.scrollTop = el.scrollHeight;
+  }
+});
+api.on('installed', ({ bottleId, installer, added, candidates }) => {
+  if (added.length) {
+    toast(`Installed — added ${added.join(', ')} to your Library`);
+    if (view !== 'console') go('library');
+  } else if (candidates.length) {
+    pickAppsModal(bottleId, candidates, `${installer} finished`, 'Pick the programs you want in your Library.');
+  } else {
+    toast(`${installer} finished — no new programs found`);
   }
 });
 api.on('open-files', (files) => { const f = files.find((p) => RUNNABLE.test(p)); if (f) runFileFlow(f); });
