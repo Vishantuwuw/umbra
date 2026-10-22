@@ -71,8 +71,25 @@ function wineEnv(b, extra = {}) {
     ...extra,
   };
   if (s.metalHud) env.MTL_HUD_ENABLED = '1';
+  if (wine?.cx) Object.assign(env, cxEnv(wine.cx), extra);
   return env;
 }
+
+// What CrossOver's own launcher sets: its Mac libraries (MoltenVK, freetype, gnutls,
+// GStreamer…) live outside the engine, so point the loader at them.
+function cxEnv({ root, frameworks: fw }) {
+  return {
+    DYLD_FALLBACK_LIBRARY_PATH: [path.join(fw, 'moltenvkcx'), fw, path.join(fw, 'GStreamer.framework', 'Libraries'), '/usr/lib', '/usr/local/lib'].join(':'),
+    CX_ROOT: root,
+    MVK_CONFIG_RESUME_LOST_DEVICE: '1',
+    ROSETTA_ADVERTISE_AVX: '1',
+  };
+}
+
+// Bottles remember which kind of engine built them; the CrossOver engine and plain
+// Wine lay out a prefix differently, so they aren't mixed.
+const engineKind = () => (wine?.cx ? 'cx' : 'wine');
+const bottleKind = (b) => b.engineKind || 'wine';
 
 // Runs wine with args and resolves when it exits; output is streamed to the console.
 function wineRun(b, args, { env = {}, cwd, tag } = {}) {
@@ -107,7 +124,7 @@ function slug(name) {
 
 async function createBottle({ name, winver = 'win10' }, onProgress = () => {}) {
   requireEngine();
-  const b = { id: slug(name), name: name.trim() || 'Bottle', winver, created: Date.now(), retina: false };
+  const b = { id: slug(name), name: name.trim() || 'Bottle', winver, created: Date.now(), retina: false, engineKind: engineKind() };
   fs.mkdirSync(prefixOf(b), { recursive: true });
   store.get().bottles.push(b);
   store.save();
@@ -281,6 +298,9 @@ function launch({ bottleId, file, args = '', appId = null, name, steamAttempt = 
   const bin = requireEngine();
   const b = bottle(bottleId);
   if (!fs.existsSync(file)) throw new Error(`File not found: ${file}`);
+  if (bottleKind(b) !== engineKind()) {
+    throw new Error(`“${b.name}” was set up with ${bottleKind(b) === 'cx' ? 'the CrossOver engine' : 'Umbra’s old engine'}. Run setup again (Settings → Run Setup Again) and reinstall this app there.`);
+  }
   const runId = ++runSeq;
   const label = name || path.basename(file);
   const installer = !appId && isInstaller(file);
@@ -699,7 +719,7 @@ async function createMacLauncher(id) {
   fs.mkdirSync(path.join(contents, 'MacOS'), { recursive: true });
   fs.mkdirSync(path.join(contents, 'Resources'), { recursive: true });
   const env = wineEnv(b, a.hud ? { MTL_HUD_ENABLED: '1' } : {});
-  const keep = ['WINEPREFIX', 'WINEDEBUG', 'WINEDLLOVERRIDES', 'WINEMSYNC', 'WINEESYNC', 'MTL_HUD_ENABLED', 'PATH'];
+  const keep = ['WINEPREFIX', 'WINEDEBUG', 'WINEDLLOVERRIDES', 'WINEMSYNC', 'WINEESYNC', 'MTL_HUD_ENABLED', 'PATH', 'DYLD_FALLBACK_LIBRARY_PATH', 'CX_ROOT', 'MVK_CONFIG_RESUME_LOST_DEVICE', 'ROSETTA_ADVERTISE_AVX'];
   const script = [
     '#!/bin/sh',
     `# Launches “${a.name}” from the Umbra bottle “${b.name}”.`,
@@ -735,9 +755,11 @@ ${iconKey}
 }
 
 // The bottle new installs go into when the user hasn't picked one.
+// The bottle setup, Steam and Get Apps install into: one built by the current engine.
 function mainBottle() {
   const s = store.get();
-  return s.bottles.find((b) => b.id === s.settings.lastBottleId) || s.bottles.find((b) => b.ready) || s.bottles[0] || null;
+  const fits = s.bottles.filter((b) => bottleKind(b) === engineKind());
+  return fits.find((b) => b.id === s.settings.lastBottleId) || fits.find((b) => b.ready) || fits[0] || null;
 }
 
 // Adds the Windows tools that ship inside every bottle to the Library.
@@ -841,7 +863,7 @@ function findSteam(b) {
 
 function steamStatus() {
   const s = store.get();
-  const b = s.bottles.find((x) => x.steam);
+  const b = s.bottles.find((x) => x.steam && bottleKind(x) === engineKind());
   const exe = b && findSteam(b);
   const appEntry = exe && s.apps.find((a) => a.exe === exe);
   return { bottleId: b?.id || null, installed: !!exe, appId: appEntry?.id || null };
@@ -1048,7 +1070,7 @@ async function ensureSteamRuntimes(bottleId, onProgress = () => {}) {
 async function doInstallSteam(onProgress) {
   requireEngine();
   const s = store.get();
-  let b = s.bottles.find((x) => x.steam) || mainBottle();
+  let b = s.bottles.find((x) => x.steam && bottleKind(x) === engineKind()) || mainBottle();
   if (!b) b = await createBottle({ name: 'Default', winver: 'win10' }, (f, label) => onProgress(f * 0.35, label));
   b.steam = true;
   store.save();
@@ -1073,7 +1095,7 @@ async function doInstallSteam(onProgress) {
 }
 
 module.exports = {
-  steamProgress,
+  steamProgress, engineKind, bottleKind,
   init, setEngine, getEngine, createBottle, deleteBottle, setWinver, setRetina, launch, runningList, runningIn, creditPlaytime, stop, kill,
   uninstallTarget, splitArgs, prefetchSteamClient, steamNeedsRuntimes, ensureSteamRuntimes,
   tool, driveC, scan, isInstaller, readdSteam, migrateSteamArgs, repairSteam, uninstallInfo, uninstallApp, mainBottle, addWindowsTools, storeStatus, installFromStore, fixCommonProblems, createMacLauncher, installComponent, runWinetricks, setDxvk, addApp, refreshIcons, importSteamGames, updateApp, removeApp, runApp, steamStatus, installSteam, prefixOf, bottle,

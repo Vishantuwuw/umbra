@@ -120,7 +120,7 @@ function toast(msg, kind = 'ok') {
 
 // ---------- shell ----------
 function renderNav() {
-  const counts = { library: S.apps.filter((a) => a.category !== 'tool').length || '', bottles: S.bottles.length, console: S.running.length || '' };
+  const counts = { library: S.apps.filter((a) => a.category !== 'tool' && fitsEngine(a)).length || '', bottles: S.bottles.length, console: S.running.length || '' };
   $('#nav').innerHTML = Object.entries(VIEWS).filter(([, v]) => !v.hidden?.()).map(([k, v], i) => `
     ${i === 3 ? '<div class="nav-sep"></div><div class="nav-label">Advanced</div>' : ''}
     <button class="nav-item ${v.advanced ? 'small' : ''} ${view === k ? 'active' : ''}" data-nav="${k}">${icon(v.icon)}${v.title}<span class="count">${counts[k] ?? ''}</span></button>`).join('')
@@ -182,8 +182,17 @@ function go(v) {
 }
 
 // Shown until setup has finished; the welcome wizard does the actual work.
+// Apps in bottles built by another engine can't run on this one (after upgrading to
+// the CrossOver engine, setup reinstalls them in a fresh bottle).
+const fitsEngine = (a) => (S.bottles.find((b) => b.id === a.bottleId)?.engineKind || 'wine') === S.engineKind;
+
 function engineBanner() {
   const busy = S.tasks.find((t) => t.id === 'setup');
+  const upgrading = S.tasks.find((t) => t.id === 'engine');
+  if (S.platform === 'darwin' && S.engine && S.engineKind !== 'cx' && !busy) {
+    return `<div class="banner"><div class="badge-icon">${icon('bolt')}</div><div class="grow"><b>${upgrading ? 'Installing the CrossOver engine…' : 'Upgrade to the CrossOver engine'}</b><span>${upgrading ? esc(taskPct.engine?.detail || upgrading.detail) : 'The same Windows engine CrossOver uses. Steam and games work much better. Setup then reinstalls Steam with it.'}</span></div>
+      <button class="btn glow" data-act="upgrade-engine" ${upgrading ? 'disabled' : ''}>${upgrading ? `${Math.round((taskPct.engine?.pct ?? 0) * 100)}%` : `${icon('download')}Upgrade`}</button></div>`;
+  }
   if (S.settings.setupDone && S.engine && S.bottles.length && !(S.cpu.appleSilicon && !S.cpu.rosetta)) return '';
   return `<div class="banner"><div class="badge-icon">${icon('bolt')}</div><div class="grow"><b>${busy ? 'Setting up Umbra…' : 'Umbra isn’t set up yet'}</b><span>${busy ? esc(taskPct.setup?.detail || busy.detail) : 'One click installs everything needed to run Windows games and apps.'}</span></div>
     <button class="btn glow" data-act="open-wizard">${busy ? 'Show progress' : `${icon('bolt')}Set up now`}</button></div>`;
@@ -220,7 +229,7 @@ function toolTile(a) {
 
 let query = '';
 function viewLibrary() {
-  const all = [...S.apps].sort((x, y) => (y.lastPlayed || y.added) - (x.lastPlayed || x.added));
+  const all = S.apps.filter(fitsEngine).sort((x, y) => (y.lastPlayed || y.added) - (x.lastPlayed || x.added));
   const match = (a) => !query || `${a.name} ${bottleName(a.bottleId)}`.toLowerCase().includes(query.toLowerCase());
   const main = all.filter((a) => a.category !== 'tool');
   const tools = all.filter((a) => a.category === 'tool').sort((x, y) => x.name.localeCompare(y.name));
@@ -372,7 +381,7 @@ function viewSettings() {
       </dl>
       <div style="display:flex;gap:10px;flex-wrap:wrap">
         ${t ? `<button class="btn glow" disabled>Installing… ${pct}%</button>`
-          : `<button class="btn ${e ? '' : 'glow'}" data-act="install-engine" ${S.platform === 'darwin' ? '' : 'disabled'}>${icon('download')}${e ? 'Reinstall Latest Wine' : 'Install Engine'}</button>`}
+          : `<button class="btn ${e ? '' : 'glow'}" data-act="install-engine" ${S.platform === 'darwin' ? '' : 'disabled'}>${icon('download')}${S.engineKind === 'cx' ? 'Reinstall CrossOver Engine' : 'Install CrossOver Engine'}</button>`}
         <button class="btn" data-act="choose-engine">${icon('file')}Use Custom Wine…</button>
         ${s.enginePath ? '<button class="btn ghost" data-act="reset-engine">Reset to automatic</button>' : ''}
         ${S.cpu.appleSilicon && !S.cpu.rosetta ? '<button class="btn glow" data-act="rosetta">Install Rosetta</button>' : ''}
@@ -867,6 +876,11 @@ const actions = {
   'setup-all': async () => {
     await call('setup:all');
     toast('Umbra is ready — drop in any .exe, or install Steam');
+  },
+  'upgrade-engine': async () => {
+    await call('engine:install');
+    toast('CrossOver engine installed. Now let’s set things up with it.');
+    openWizard();
   },
   'install-engine': async () => {
     go('settings');

@@ -34,7 +34,7 @@ app.whenReady().then(async () => {
     console.log(`${src}:`, await engine[src]().catch((e) => `unavailable (${e.message})`));
   }
   let eng = await engine.detect(null);
-  if (!eng || (process.platform === 'darwin' && eng.source !== 'Umbra engine')) {
+  if (!eng || (process.platform === 'darwin' && !/^(Umbra|CrossOver) engine$/.test(eng.source))) {
     let last = -1;
     eng = await engine.install((f, label) => {
       const step = Math.floor((f ?? 0) * 20);

@@ -22,7 +22,7 @@
 - **Bottles**: isolated Windows 10/11/7/XP environments, each with its own C: drive and registry.
 - **One-click Steam**: downloads Valve's official Windows Steam installer into a dedicated bottle.
 - **Library**: saves your games and apps for one-click launching and tracks playtime.
-- **One-click engine install**: downloads a prebuilt macOS Wine build, so you don't need Homebrew.
+- **CrossOver's engine**: Umbra installs CrossOver's open-source Wine (WineCX, as packaged by the Sikarugir/Wineskin project) with its Mac libraries, the same engine CrossOver itself is built on. Plain Wine is the fallback.
 - **Performance toggles**: MSync, ESync, Metal HUD and Retina mode.
 - **Live console**: shows Wine output, lists running processes, and lets you force-quit them.
 

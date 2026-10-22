@@ -8,11 +8,19 @@ const { execFile } = require('child_process');
 const { app } = require('electron');
 
 const RELEASES_API = 'https://api.github.com/repos/Gcenx/macOS_Wine_builds/releases?per_page=40';
+// CrossOver's Wine (CodeWeavers' open-source tree, the engine inside CrossOver), as packaged
+// by the Sikarugir/Wineskin project, plus the Mac libraries it loads at runtime.
+const CX_ENGINE = { version: '24.0.7', url: 'https://github.com/Sikarugir-App/Engines/releases/download/v1.0/WS12WineCX24.0.7_7.tar.xz' };
+const CX_LIBS = { url: 'https://github.com/Sikarugir-App/Wrapper/releases/download/v1.0/Template-1.0.tar.xz', dir: 'Template-1.0.app/Contents/Frameworks' };
 const BREW_CASK_API = 'https://formulae.brew.sh/api/cask';
 const EXTRA_PATH = ['/opt/homebrew/bin', '/usr/local/bin', '/opt/local/bin', '/usr/bin', '/bin', '/usr/sbin', '/sbin'];
 
 function engineDir() {
   return path.join(app.getPath('userData'), 'engine');
+}
+
+function cxDir() {
+  return path.join(app.getPath('userData'), 'engine-cx');
 }
 
 function cacheDir() {
@@ -72,7 +80,10 @@ function findWineIn(root, depth = 7) {
 
 function candidates() {
   const home = os.homedir();
-  const list = [{ source: 'Umbra engine', find: () => findWineIn(engineDir()) }];
+  const list = [
+    { source: 'CrossOver engine', find: () => pickInBin(path.join(cxDir(), 'wine', 'bin')) },
+    { source: 'Umbra engine', find: () => findWineIn(engineDir()) },
+  ];
   // Engines with Apple's D3DMetal (DirectX 11/12 → Metal), from Whisky or the Game Porting Toolkit.
   list.push({ source: 'Whisky (D3DMetal)', find: () => pickInBin(path.join(home, 'Library/Application Support/com.isaacmarovitz.Whisky/Libraries/Wine/bin')) });
   for (const base of ['/opt/homebrew/opt', '/usr/local/opt']) {
@@ -94,8 +105,16 @@ function hasD3DMetal(bin) {
     .some((p) => fs.existsSync(path.join(root, p)));
 }
 
+// CrossOver's engine loads freetype, gnutls, MoltenVK and friends from a separate
+// Frameworks folder; runtime.wineEnv points the loader there.
+function cxInfo(bin) {
+  const root = cxDir();
+  if (!path.resolve(bin).startsWith(path.join(root, 'wine') + path.sep)) return null;
+  return { root: path.join(root, 'wine'), frameworks: path.join(root, 'Frameworks') };
+}
+
 async function describe(p, source) {
-  return { path: p, source, version: await version(p), d3dmetal: hasD3DMetal(p) };
+  return { path: p, source, version: await version(p), d3dmetal: hasD3DMetal(p), cx: cxInfo(p) };
 }
 
 // Every Wine engine on this Mac, for the engine picker.
@@ -198,6 +217,10 @@ async function download(url, dest, onProgress, { signal } = {}) {
 }
 
 // Which Wine build flavor to prefer; UMBRA_ENGINE_FLAVOR=devel|staging puts that one first.
+// The CrossOver engine is the default; UMBRA_ENGINE_FLAVOR=stable|staging|devel picks a
+// plain Wine build instead.
+const wantsPlainWine = () => ['stable', 'staging', 'devel'].includes(process.env.UMBRA_ENGINE_FLAVOR);
+
 function flavorOrder() {
   const order = ['stable', 'staging', 'devel'];
   const want = process.env.UMBRA_ENGINE_FLAVOR;
@@ -250,9 +273,50 @@ async function latestRelease() {
 let engineInstall = null;
 
 // Setup and the Engine page can both start an install; share one instead of racing.
-function install(onProgress) {
-  engineInstall ||= doInstall(onProgress).finally(() => { engineInstall = null; });
+function install(onProgress, { plain = wantsPlainWine() } = {}) {
+  engineInstall ||= (plain ? doInstall(onProgress) : installCx(onProgress).catch((e) => {
+    console.warn(`Umbra: CrossOver engine install failed (${e.message}); installing plain Wine instead`);
+    return doInstall(onProgress);
+  })).finally(() => { engineInstall = null; });
   return engineInstall;
+}
+
+async function fetchArchive(url, label, onProgress) {
+  const archive = path.join(cacheDir(), path.basename(new URL(url).pathname));
+  if (!fs.existsSync(archive)) {
+    await download(url, archive, (f, got, total) => {
+      const mb = (n) => (n / 1048576).toFixed(0);
+      onProgress(f, `Downloading ${label} — ${mb(got)} / ${mb(total)} MB`);
+    });
+  }
+  return archive;
+}
+
+// Downloads CrossOver's Wine and its libraries into Umbra's engine-cx folder.
+async function installCx(onProgress) {
+  if (process.platform !== 'darwin') throw new Error('The CrossOver engine is macOS-only');
+  const engineTar = await fetchArchive(CX_ENGINE.url, 'the CrossOver engine', (f, l) => onProgress(0.01 + (f ?? 0) * 0.55, l));
+  const libsTar = await fetchArchive(CX_LIBS.url, 'engine libraries', (f, l) => onProgress(0.56 + (f ?? 0) * 0.3, l));
+  onProgress(0.87, 'Unpacking the CrossOver engine…');
+  const dir = cxDir();
+  const staging = `${dir}.new`;
+  fs.rmSync(staging, { recursive: true, force: true });
+  fs.mkdirSync(path.join(staging, 'wine'), { recursive: true });
+  fs.mkdirSync(path.join(staging, 'Frameworks'), { recursive: true });
+  try {
+    await exec('/usr/bin/tar', ['-xJf', engineTar, '-C', path.join(staging, 'wine'), '--strip-components', '1'], { timeout: 10 * 60 * 1000 });
+    await exec('/usr/bin/tar', ['-xJf', libsTar, '-C', path.join(staging, 'Frameworks'), '--strip-components', '3', CX_LIBS.dir], { timeout: 10 * 60 * 1000 });
+  } catch (e) {
+    for (const f of [engineTar, libsTar, staging]) fs.rmSync(f, { recursive: true, force: true });
+    throw new Error(`Could not unpack the CrossOver engine, so the download was deleted. Try again. (${e.message})`);
+  }
+  await exec('/usr/bin/xattr', ['-dr', 'com.apple.quarantine', staging]).catch(() => {});
+  if (!pickInBin(path.join(staging, 'wine', 'bin'))) throw new Error('The CrossOver engine download did not contain Wine');
+  fs.rmSync(dir, { recursive: true, force: true });
+  fs.renameSync(staging, dir);
+  for (const f of [engineTar, libsTar]) fs.rmSync(f, { force: true });
+  onProgress(1, `Installed the CrossOver engine (WineCX ${CX_ENGINE.version})`);
+  return detect(null);
 }
 
 // Downloads and unpacks the latest Wine build into Umbra's own engine folder.
@@ -294,4 +358,4 @@ async function doInstall(onProgress) {
   return detect(null);
 }
 
-module.exports = { detect, detectAll, install, githubRelease, brewRelease, download, cpu, installRosetta, wineserverFor, envPath, exec, cacheDir };
+module.exports = { detect, detectAll, install, installCx, cxDir, githubRelease, brewRelease, download, cpu, installRosetta, wineserverFor, envPath, exec, cacheDir };

@@ -121,6 +121,7 @@ function state() {
     settings: s.settings,
     engine: runtime.getEngine(),
     platform: process.platform,
+    engineKind: runtime.engineKind(),
     cpu: cpuInfo,
     running: runtime.runningList(),
     steam: runtime.steamStatus(),
@@ -198,6 +199,7 @@ async function boot() {
   await sleep(200);
   splashStep(74, `Loading ${store.get().bottles.length} bottle(s) and ${store.get().apps.length} app(s)`);
   runtime.refreshIcons();
+  needsSetupForEngine();
   runtime.migrateSteamArgs();
   if (auth.configured()) {
     splashStep(82, 'Checking your account');
@@ -269,13 +271,21 @@ handle('state', () => state());
 handle('logs', () => logs);
 handle('logs:clear', () => { logs = []; });
 
-handle('engine:install', () => task('engine', 'Installing Wine engine', async (p) => {
+handle('engine:install', () => task('engine', 'Installing the CrossOver engine', async (p) => {
   const eng = await engine.install(p);
   runtime.setEngine(eng);
   store.get().settings.enginePath = null;
+  needsSetupForEngine();
   store.save();
   return eng;
 }));
+
+// Bottles built by another engine can't be reused, so a new engine means running setup
+// again (it builds a fresh bottle and reinstalls Steam and the Windows tools there).
+function needsSetupForEngine() {
+  const s = store.get();
+  if (runtime.getEngine() && s.bottles.length && !runtime.mainBottle()) s.settings.setupDone = false;
+}
 handle('engine:choose', async () => {
   const r = await dialog.showOpenDialog(main, { title: 'Choose a wine or wine64 binary', properties: ['openFile', 'treatPackageAsDirectory'] });
   if (r.canceled) return null;
@@ -305,7 +315,7 @@ handle('setup:all', (opts = {}) => task('setup', 'Setting up Umbra', async (p, t
   const run = {
     rosetta: async () => { if (!cpuInfo.rosetta) { await engine.installRosetta(); cpuInfo = await engine.cpu(); } },
     engine: async (sp) => { if (!runtime.getEngine()) runtime.setEngine(await engine.install(sp)); },
-    bottle: async (sp) => { if (!b) b = await runtime.createBottle({ name: 'Default', winver: 'win10' }, sp); },
+    bottle: async (sp) => { if (!b) b = await runtime.createBottle({ name: store.get().bottles.length ? 'Main' : 'Default', winver: 'win10' }, sp); },
     tools: async () => { runtime.addWindowsTools(b.id); },
     components: async (sp) => {
       for (const [i, c] of ['vcrun', 'directx9'].entries()) {
