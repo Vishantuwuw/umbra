@@ -319,11 +319,24 @@ function paintLogs() {
 
 // ---------- dock (task progress) ----------
 function renderDock() {
-  $('#dock').innerHTML = S.tasks.map((t) => {
+  const dock = $('#dock');
+  const ids = new Set(S.tasks.map((t) => t.id));
+  for (const el of [...dock.children]) if (!ids.has(el.dataset.id)) el.remove();
+  for (const t of S.tasks) {
     const pct = Math.round((taskPct[t.id]?.pct ?? t.pct ?? 0) * 100);
     const detail = taskPct[t.id]?.detail ?? t.detail;
-    return `<div class="task"><div class="r"><span>${esc(t.label)}</span><em>${pct}%</em></div><div class="d">${esc(detail)}</div><div class="track"><i style="width:${Math.max(2, pct)}%"></i></div></div>`;
-  }).join('');
+    let el = [...dock.children].find((c) => c.dataset.id === t.id);
+    if (!el) {
+      el = document.createElement('div');
+      el.className = 'task';
+      el.dataset.id = t.id;
+      el.innerHTML = `<div class="r"><span>${esc(t.label)}</span><em></em></div><div class="d"></div><div class="track"><i></i></div>`;
+      dock.appendChild(el);
+    }
+    el.querySelector('em').textContent = `${pct}%`;
+    el.querySelector('.d').textContent = detail;
+    el.querySelector('.track i').style.width = `${Math.max(2, pct)}%`;
+  }
 }
 
 // ---------- modals ----------

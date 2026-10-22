@@ -8,6 +8,7 @@ const { execFile } = require('child_process');
 const { app } = require('electron');
 
 const RELEASES_API = 'https://api.github.com/repos/Gcenx/macOS_Wine_builds/releases?per_page=40';
+const BREW_CASK_API = 'https://formulae.brew.sh/api/cask';
 const EXTRA_PATH = ['/opt/homebrew/bin', '/usr/local/bin', '/opt/local/bin', '/usr/bin', '/bin', '/usr/sbin', '/sbin'];
 
 function engineDir() {
@@ -148,9 +149,11 @@ async function download(url, dest, onProgress) {
 
 // Picks the newest Wine Stable build, falling back to Staging/Devel if a
 // recent stable one is not published.
-async function latestRelease() {
-  const res = await fetch(RELEASES_API, { headers: { 'User-Agent': 'Umbra', Accept: 'application/vnd.github+json' } });
-  if (!res.ok) throw new Error(`Could not reach the Wine release feed (HTTP ${res.status})`);
+async function githubRelease() {
+  const headers = { 'User-Agent': 'Umbra', Accept: 'application/vnd.github+json' };
+  if (process.env.GITHUB_TOKEN) headers.Authorization = `Bearer ${process.env.GITHUB_TOKEN}`;
+  const res = await fetch(RELEASES_API, { headers });
+  if (!res.ok) throw new Error(`GitHub release feed returned HTTP ${res.status}`);
   const releases = (await res.json()).filter((r) => !r.draft);
   for (const re of [/^wine-stable-.*\.tar\.xz$/, /^wine-staging-.*\.tar\.xz$/, /^wine-devel-.*\.tar\.xz$/, /\.tar\.xz$/]) {
     for (const rel of releases) {
@@ -159,6 +162,32 @@ async function latestRelease() {
     }
   }
   throw new Error('No macOS Wine build found in recent releases');
+}
+
+// Homebrew's cask index points at the same builds and is not rate-limited
+// like the anonymous GitHub API.
+async function brewRelease() {
+  for (const cask of ['wine-stable', 'wine@staging', 'wine@devel']) {
+    try {
+      const res = await fetch(`${BREW_CASK_API}/${cask}.json`, { headers: { 'User-Agent': 'Umbra' } });
+      if (!res.ok) continue;
+      const c = await res.json();
+      if (c.url && /\.tar\.xz$/.test(c.url)) return { tag: c.version, name: path.basename(new URL(c.url).pathname), url: c.url, size: 0 };
+    } catch {}
+  }
+  throw new Error('Homebrew cask index had no Wine build');
+}
+
+async function latestRelease() {
+  try {
+    return await githubRelease();
+  } catch (err) {
+    try {
+      return await brewRelease();
+    } catch {
+      throw new Error(`Could not find a Wine build to download (${err.message})`);
+    }
+  }
 }
 
 // Downloads and unpacks the latest Wine build into Umbra's own engine folder.
@@ -191,4 +220,4 @@ async function install(onProgress) {
   return detect(null);
 }
 
-module.exports = { detect, install, download, cpu, installRosetta, wineserverFor, envPath, exec, cacheDir };
+module.exports = { detect, install, githubRelease, brewRelease, download, cpu, installRosetta, wineserverFor, envPath, exec, cacheDir };

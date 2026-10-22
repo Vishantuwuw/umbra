@@ -27,6 +27,7 @@ jobs:
         env:
           UMBRA_HOME: ${{ runner.temp }}/umbra-home
           SHOTS_DIR: ${{ runner.temp }}
+          GITHUB_TOKEN: ${{ github.token }}
         run: npx electron test/smoke.js
       - name: Screenshot the app UI
         env:

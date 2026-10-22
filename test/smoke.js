@@ -18,6 +18,9 @@ app.whenReady().then(async () => {
   runtime.init((type, p) => type === 'log' && console.log('  wine |', p.line));
 
   console.log('cpu:', await engine.cpu());
+  for (const src of ['githubRelease', 'brewRelease']) {
+    console.log(`${src}:`, await engine[src]().catch((e) => `unavailable (${e.message})`));
+  }
   let eng = await engine.detect(null);
   if (!eng || (process.platform === 'darwin' && eng.source !== 'Umbra engine')) {
     let last = -1;
