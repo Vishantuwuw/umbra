@@ -104,11 +104,12 @@ app.whenReady().then(async () => {
       const steamApp = await runtime.installSteam(progress());
       console.log('PASS: Steam installed ->', steamApp.exe, 'args:', steamApp.args);
       const sr = runtime.runApp(steamApp.id);
-      for (let i = 1; i <= 4; i++) {
-        await sleep(30000);
-        try { execFileSync('/usr/sbin/screencapture', ['-x', path.join(shots, `mac-steam-${i * 30}s.png`)]); } catch {}
+      // Steam's first launch downloads and installs a large update before sign-in appears.
+      for (let i = 1; i <= 8; i++) {
+        await sleep(45000);
+        try { execFileSync('/usr/sbin/screencapture', ['-x', path.join(shots, `mac-steam-${String(i * 45).padStart(3, '0')}s.png`)]); } catch {}
       }
-      console.log('Steam still running after 2 min:', runtime.runningList().some((r) => r.runId === sr.runId));
+      console.log('Steam still running after 6 min:', runtime.runningList().some((r) => r.runId === sr.runId));
       const logs = path.join(path.dirname(steamApp.exe), 'logs');
       for (const f of ['bootstrap_log.txt', 'connection_log.txt', 'webhelper.txt', 'cef_log.txt', 'stderr.txt']) {
         try {
