@@ -2,7 +2,10 @@
 
 **Run Windows apps and games on your Mac.** Umbra is a CrossOver-style launcher with a dark UI. It runs Windows programs on macOS through [Wine](https://www.winehq.org/), the open-source compatibility layer that CrossOver is also built on.
 
-- **One-click setup**: a single "Set up everything" button installs Rosetta, the Wine engine, a Windows 10 bottle and Visual C++.
+- **Welcome setup**: on first launch Umbra asks what you want (Steam, Windows essentials, game components, .NET) and installs it all with one click.
+- **Pre-installed Windows tools**: Task Manager, File Explorer, Notepad, Command Prompt, Control Panel, Registry Editor, WordPad and Minesweeper are in your Library from the start.
+- **Get Apps**: one-click installs for Steam, the Epic Games Launcher, GOG Galaxy, Battle.net, EA app, Ubisoft Connect, 7-Zip, Notepad++ and VLC.
+- **Simple per-game settings**: a gear on every game for the FPS counter, faster graphics (DXVK), Retina, Windows version and launch options, plus one-click "Fix Common Problems".
 - **DirectX 12 via D3DMetal**: Umbra finds the Wine engines from Whisky or Apple's Game Porting Toolkit, and you can switch to one on the Engine page to run DirectX 12 games.
 - **Bottle backups**: save a whole Windows setup (games, saves, settings) as one `.tar.gz` from the bottle's menu.
 - **Favorites**: star games to pin them to the top of your Library.
@@ -23,6 +26,8 @@
 
 | | |
 |---|---|
+| ![Welcome setup](docs/screenshots/welcome.png) | ![Get Apps](docs/screenshots/get-apps.png) |
+| ![Library with Windows tools](docs/screenshots/library-tools.png) | ![Per-game settings](docs/screenshots/app-settings.png) |
 | ![Windows exe running on macOS](docs/screenshots/mac-exe-running.png) | ![Loading screen](docs/screenshots/loading-47.png) |
 | ![Library](docs/screenshots/library-running.png) | ![Bottles](docs/screenshots/bottles.png) |
 | ![Run dialog](docs/screenshots/run-dialog.png) | ![Steam](docs/screenshots/steam.png) |
@@ -35,7 +40,7 @@
 1. Download the latest `.dmg` from **[Releases](../../releases)**: `arm64` for Apple Silicon, `x64` for Intel Macs.
 2. Drag **Umbra** into **Applications**.
 3. Umbra isn't notarized, so macOS blocks it the first time. Open it once, then go to **System Settings → Privacy & Security → Open Anyway**. You can also run `xattr -cr /Applications/Umbra.app` in Terminal instead.
-4. In Umbra, click **Set up everything** on the Library page. It installs Rosetta (on Apple Silicon), the Wine engine, a Windows bottle and Visual C++.
+4. Umbra's welcome screen sets everything up. Pick what you want installed (Steam is on by default) and click **Install**.
 
 ## Compatibility
 
@@ -67,6 +72,7 @@ Each push to `main` runs a GitHub Actions job on a real Mac. That job installs t
 | `src/runtime.js` | Bottles (Wine prefixes), launching programs, installer tracking, Steam setup, DXVK |
 | `src/components.js` | Visual C++ / .NET / DirectX installers and winetricks |
 | `src/steamlib.js` | Reads Steam app manifests to import games |
+| `src/catalog.js` | Pre-installed Windows tools and the Get Apps catalog |
 | `src/icons.js` | Extracts icons from Windows executables |
 | `src/renderer/` | The UI (`index.html`, `app.js`, `styles.css`) and loading screen (`splash.html`) |
 

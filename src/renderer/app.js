@@ -41,11 +41,11 @@ let logs = [];
 const taskPct = {};
 
 const VIEWS = {
-  library: { title: 'Library', icon: 'library', sub: () => `${S.apps.length} app${S.apps.length === 1 ? '' : 's'} · drop any .exe to run it` },
-  bottles: { title: 'Bottles', icon: 'bottle', sub: () => 'Isolated Windows environments. Each one is its own C: drive.' },
-  steam: { title: 'Steam', icon: 'steam', sub: () => 'Your Windows Steam library, on macOS.' },
-  engine: { title: 'Engine', icon: 'engine', sub: () => 'The Wine compatibility layer that translates Windows calls for your Mac.' },
-  console: { title: 'Console', icon: 'console', sub: () => 'Live output from everything running in Umbra.' },
+  library: { title: 'Library', icon: 'library', sub: () => 'Your Windows games and apps. Click one to play.' },
+  store: { title: 'Get Apps', icon: 'download', sub: () => 'One-click installs for game stores and popular apps.' },
+  settings: { title: 'Settings', icon: 'sliders', sub: () => 'Performance, setup and the Windows engine.' },
+  bottles: { title: 'Bottles', icon: 'bottle', sub: () => 'Advanced: separate Windows environments, each with its own C: drive.', advanced: true },
+  console: { title: 'Console', icon: 'console', sub: () => 'Advanced: live output from everything running in Umbra.', advanced: true },
 };
 
 // ---------- helpers ----------
@@ -109,19 +109,19 @@ function toast(msg, kind = 'ok') {
 
 // ---------- shell ----------
 function renderNav() {
-  const counts = { library: S.apps.length, bottles: S.bottles.length, console: S.running.length || '' };
+  const counts = { library: S.apps.filter((a) => a.category !== 'tool').length || '', bottles: S.bottles.length, console: S.running.length || '' };
   $('#nav').innerHTML = Object.entries(VIEWS).map(([k, v], i) => `
-    ${i === 3 ? '<div class="nav-sep"></div>' : ''}
-    <button class="nav-item ${view === k ? 'active' : ''}" data-nav="${k}">${icon(v.icon)}${v.title}<span class="count">${counts[k] ?? ''}</span></button>`).join('');
+    ${i === 3 ? '<div class="nav-sep"></div><div class="nav-label">Advanced</div>' : ''}
+    <button class="nav-item ${v.advanced ? 'small' : ''} ${view === k ? 'active' : ''}" data-nav="${k}">${icon(v.icon)}${v.title}<span class="count">${counts[k] ?? ''}</span></button>`).join('');
 
   const e = S.engine;
   const rosettaMissing = S.cpu.appleSilicon && !S.cpu.rosetta;
   $('#side-foot').innerHTML = `
     ${S.running.length ? `<div class="pill" data-nav="console" style="cursor:pointer"><div class="dot live"></div><div><b>${S.running.length} running</b><span>${esc(S.running.map((r) => r.name).join(', '))}</span></div></div>` : ''}
     ${S.update ? `<div class="pill update" data-act="open-update" style="cursor:pointer"><div class="dot live"></div><div><b>Update available</b><span>Umbra ${esc(S.update.version)} · click to download</span></div></div>` : ''}
-    <div class="pill" data-nav="engine" style="cursor:pointer">
+    <div class="pill" data-nav="settings" style="cursor:pointer">
       <div class="dot ${e && !rosettaMissing ? 'ok' : 'warn'}"></div>
-      <div><b>${e ? 'Engine ready' : 'No engine'}</b><span>${e ? esc(e.version || e.source) : 'Click to install'}${rosettaMissing ? ' · Rosetta needed' : ''}</span></div>
+      <div><b>${e && S.settings.setupDone ? 'Ready to play' : 'Setup needed'}</b><span>${e ? esc(e.version || e.source) : 'Click to set up'}${rosettaMissing ? ' · Rosetta needed' : ''}</span></div>
     </div>`;
 }
 
@@ -130,10 +130,10 @@ function renderTop() {
   $('#title').textContent = v.title;
   $('#subtitle').textContent = v.sub();
   const actions = {
-    library: `${S.apps.length > 1 ? `<label class="search">${icon('search')}<input id="search" placeholder="Search library" value="${esc(query)}" spellcheck="false"></label>` : ''}<button class="btn" data-act="add-app">${icon('plus')}Add App</button><button class="btn primary" data-act="run-exe">${icon('play')}Run .exe…</button>`,
+    library: `${S.apps.length > 1 ? `<label class="search">${icon('search')}<input id="search" placeholder="Search" value="${esc(query)}" spellcheck="false"></label>` : ''}<button class="btn primary" data-act="add-menu">${icon('plus')}Add</button>`,
+    store: '',
+    settings: '',
     bottles: `<button class="btn primary" data-act="new-bottle">${icon('plus')}New Bottle</button>`,
-    steam: '',
-    engine: `<button class="btn" data-act="redetect">${icon('refresh')}Re-detect</button>`,
     console: `<button class="btn" data-act="clear-logs">${icon('trash')}Clear</button>`,
   };
   $('#top-actions').innerHTML = actions[view];
@@ -143,7 +143,7 @@ function render() {
   if (!S) return;
   renderNav();
   if (document.activeElement?.id !== 'search') renderTop();
-  const fn = { library: viewLibrary, bottles: viewBottles, steam: viewSteam, engine: viewEngine, console: viewConsole }[view];
+  const fn = { library: viewLibrary, store: viewStore, settings: viewSettings, bottles: viewBottles, console: viewConsole }[view] || viewLibrary;
   const scroll = $('#view').scrollTop;
   $('#view').innerHTML = fn();
   $('#view').scrollTop = scroll;
@@ -153,7 +153,7 @@ function render() {
 
 function go(v) {
   view = v;
-  if (v === 'engine') loadEngines();
+  if (v === 'settings') loadEngines();
   $('#view').style.animation = 'none';
   void $('#view').offsetWidth;
   $('#view').style.animation = '';
@@ -161,32 +161,17 @@ function go(v) {
   render();
 }
 
-function setupCard() {
-  const steps = [
-    ...(S.cpu.appleSilicon ? [['Rosetta 2', S.cpu.rosetta]] : []),
-    ['Wine engine', !!S.engine],
-    ['Windows 10 bottle', S.bottles.length > 0],
-    ['Visual C++ runtime', S.bottles.some((b) => b.components?.vcrun)],
-  ];
-  if (steps.every(([, done]) => done)) return '';
-  if (S.settings.setupDone && S.engine && S.bottles.length) return '';
-  const busy = S.tasks.find((t) => t.id === 'setup');
-  return `<div class="setup">
-    <div class="setup-text"><div class="kicker">Get started</div><h3>Set up Umbra in one click</h3>
-      <p>Everything needed to run Windows apps and games, installed and configured for you.</p>
-      <button class="btn lg glow" data-act="setup-all" ${busy ? 'disabled' : ''}>${busy ? `Setting up… ${Math.round((taskPct.setup?.pct ?? busy.pct ?? 0) * 100)}%` : `${icon('bolt')}Set up everything`}</button></div>
-    <ol class="setup-steps">${steps.map(([name, done]) => `<li class="${done ? 'done' : ''}"><span>${done ? icon('check') : ''}</span>${name}</li>`).join('')}</ol>
-  </div>`;
-}
-
+// Shown until setup has finished; the welcome wizard does the actual work.
 function engineBanner() {
-  if (view === 'library') { const c = setupCard(); if (c) return c; }
-  if (S.engine && !(S.cpu.appleSilicon && !S.cpu.rosetta)) return '';
-  if (!S.engine) return `<div class="banner"><div class="badge-icon">${icon('engine')}</div><div class="grow"><b>Install the Wine engine to start running Windows apps</b><span>One click. About 200 MB, downloaded once.</span></div><button class="btn glow" data-act="install-engine">${icon('download')}Install Engine</button></div>`;
-  return `<div class="banner"><div class="badge-icon">${icon('chip')}</div><div class="grow"><b>Rosetta 2 is required on Apple Silicon</b><span>Windows programs are x86 code. Rosetta translates them for your M-series chip.</span></div><button class="btn glow" data-act="rosetta">Install Rosetta</button></div>`;
+  const busy = S.tasks.find((t) => t.id === 'setup');
+  if (S.settings.setupDone && S.engine && S.bottles.length && !(S.cpu.appleSilicon && !S.cpu.rosetta)) return '';
+  return `<div class="banner"><div class="badge-icon">${icon('bolt')}</div><div class="grow"><b>${busy ? 'Setting up Umbra…' : 'Umbra isn’t set up yet'}</b><span>${busy ? esc(taskPct.setup?.detail || busy.detail) : 'One click installs everything needed to run Windows games and apps.'}</span></div>
+    <button class="btn glow" data-act="open-wizard">${busy ? 'Show progress' : `${icon('bolt')}Set up now`}</button></div>`;
 }
 
 // ---------- Library ----------
+const appSub = (a) => `${S.bottles.length > 1 ? `${esc(bottleName(a.bottleId))} · ` : ''}${fmtTime(a.playtime)}`;
+
 function tile(a) {
   const live = isRunning(a.id);
   return `<div class="tile" data-app="${a.id}">
@@ -198,47 +183,62 @@ function tile(a) {
       ${a.favorite ? `<div class="fav-badge">${icon('star')}</div>` : ''}
       <div class="play"><div class="play-circle">${icon('play')}</div></div>
     </div>
-    <div class="body"><div class="t"><b>${esc(a.name)}</b><span>${esc(bottleName(a.bottleId))} · ${fmtTime(a.playtime)}</span></div>
-    <button class="icon-btn" data-act="app-menu" data-id="${a.id}">${icon('more')}</button></div>
+    <div class="body"><div class="t"><b>${esc(a.name)}</b><span>${appSub(a)}</span></div>
+    <button class="icon-btn" title="Settings" data-act="app-settings" data-id="${a.id}">${icon('sliders')}</button>
+    <button class="icon-btn" title="More" data-act="app-menu" data-id="${a.id}">${icon('more')}</button></div>
   </div>`;
+}
+
+function toolTile(a) {
+  return `<button class="tool-tile ${isRunning(a.id) ? 'live' : ''}" data-act="play" data-id="${a.id}" title="Open ${esc(a.name)}">
+    <span class="tool-icon" style="background:${artFor(a.name)}">${a.icon ? img([fileUrl(a.icon)], 'tool-img') : esc(initial(a.name))}</span>
+    <span class="tool-name">${esc(a.name)}</span>
+  </button>`;
 }
 
 let query = '';
 function viewLibrary() {
-  const apps = [...S.apps].sort((x, y) => (y.lastPlayed || y.added) - (x.lastPlayed || x.added));
-  const shown0 = query ? apps.filter((a) => `${a.name} ${bottleName(a.bottleId)}`.toLowerCase().includes(query.toLowerCase())) : apps;
-  const shown = [...shown0.filter((a) => a.favorite), ...shown0.filter((a) => !a.favorite)];
-  if (!apps.length) {
+  const all = [...S.apps].sort((x, y) => (y.lastPlayed || y.added) - (x.lastPlayed || x.added));
+  const match = (a) => !query || `${a.name} ${bottleName(a.bottleId)}`.toLowerCase().includes(query.toLowerCase());
+  const main = all.filter((a) => a.category !== 'tool');
+  const tools = all.filter((a) => a.category === 'tool').sort((x, y) => x.name.localeCompare(y.name));
+  const shown = [...main.filter((a) => a.favorite && match(a)), ...main.filter((a) => !a.favorite && match(a))];
+  const toolsShown = tools.filter(match);
+  const toolsSection = toolsShown.length ? `<div class="section-h"><h2>Windows Tools</h2><span class="faint">Built into Windows</span></div>
+    <div class="tools-grid">${toolsShown.map(toolTile).join('')}</div>` : '';
+  if (!main.length) {
     return `${engineBanner()}
-      <div class="empty" data-act="run-exe" style="margin-top:12px">
-        <div class="big-icon">${icon('file')}</div>
-        <h3>Drop a Windows program here</h3>
-        <p>Drag any .exe, .msi or .bat onto this window — or click to choose one. Umbra runs it inside a bottle using Wine.</p>
+      <div class="empty-hero">
+        <div class="big-icon">${icon('gamepad')}</div>
+        <h3>Let’s add your first game or app</h3>
+        <p>Install a game store like Steam, or run any Windows program you already have. You can also drag an .exe straight onto this window.</p>
+        <div class="row">
+          <button class="btn lg glow" data-nav="store">${icon('download')}Get Apps</button>
+          <button class="btn lg" data-act="run-exe">${icon('file')}Run a Windows Program…</button>
+        </div>
       </div>
-      <div class="quick">
-        <div class="card" data-nav="steam"><div class="qi" style="color:var(--cyan)">${icon('steam')}</div><b>Install Steam</b><span>Get the Windows Steam client and your PC library.</span></div>
-        <div class="card" data-act="new-bottle"><div class="qi" style="color:var(--violet-2)">${icon('bottle')}</div><b>Create a bottle</b><span>A fresh, isolated Windows 10 environment.</span></div>
-        <div class="card" data-nav="engine"><div class="qi" style="color:var(--green)">${icon('engine')}</div><b>Engine & performance</b><span>MSync, Metal HUD, Retina and more.</span></div>
-      </div>`;
+      ${toolsSection}`;
   }
-  const hero = apps[0];
+  const hero = main[0];
   return `${engineBanner()}
-    <div class="hero">
+    ${query ? '' : `<div class="hero">
       <div class="art" style="background:${artFor(hero.name)}">${hero.icon ? '' : `<div class="letter">${esc(initial(hero.name))}</div>`}${appArt(hero, true)}</div>
       <div class="info">
         <div class="kicker">${isRunning(hero.id) ? 'Now playing' : hero.lastPlayed ? `Last played ${ago(hero.lastPlayed)}` : 'Recently added'}</div>
         <h3>${esc(hero.name)}</h3>
-        <div class="meta">${esc(bottleName(hero.bottleId))} · ${fmtTime(hero.playtime)}</div>
+        <div class="meta">${appSub(hero)}</div>
         <div class="row">
           ${isRunning(hero.id)
             ? `<button class="btn lg" data-act="stop-app" data-id="${hero.id}">${icon('stop')}Stop</button>`
             : `<button class="btn lg primary" data-act="play" data-id="${hero.id}">${icon('play')}Play</button>`}
+          <button class="btn lg" data-act="app-settings" data-id="${hero.id}">${icon('sliders')}Settings</button>
           <button class="btn lg" data-act="app-menu" data-id="${hero.id}">${icon('more')}</button>
         </div>
       </div>
-    </div>
-    <div class="section-h"><h2>${query ? `Results for “${esc(query)}”` : 'All Apps'}</h2><span class="faint">${shown.length} of ${apps.length}</span></div>
-    ${shown.length ? `<div class="grid">${shown.map(tile).join('')}</div>` : '<p class="muted">Nothing matches that search.</p>'}`;
+    </div>`}
+    <div class="section-h"><h2>${query ? `Results for “${esc(query)}”` : 'Games & Apps'}</h2><span class="faint">${shown.length} of ${main.length}</span></div>
+    ${shown.length ? `<div class="grid">${shown.map(tile).join('')}</div>` : '<p class="muted">Nothing matches that search.</p>'}
+    ${toolsSection}`;
 }
 
 // ---------- Bottles ----------
@@ -274,45 +274,66 @@ function viewBottles() {
   }).join('')}</div>`;
 }
 
-// ---------- Steam ----------
-function viewSteam() {
-  const st = S.steam;
-  const t = S.tasks.find((x) => x.id === 'steam');
-  const pct = Math.round((taskPct.steam?.pct ?? t?.pct ?? 0) * 100);
-  let action;
-  if (t) action = `<button class="btn lg" disabled>Installing… ${pct}%</button>`;
-  else if (st.installed && st.appId) {
-    action = isRunning(st.appId)
-      ? `<button class="btn lg" data-act="stop-app" data-id="${st.appId}">${icon('stop')}Stop Steam</button>`
-      : `<button class="btn lg primary" data-act="play" data-id="${st.appId}">${icon('play')}Launch Steam</button>`;
-    action += ` <button class="btn lg" data-act="steam-import">${icon('download')}Import Steam Games</button>`;
-  } else action = `<button class="btn lg glow" data-act="install-steam" ${S.engine ? '' : 'disabled'}>${icon('download')}Install Steam for Windows</button>`;
+// ---------- Get Apps ----------
+const COMPAT = { good: ['Works great', 'var(--green)'], ok: ['Works', 'var(--cyan)'], limited: ['Some games won’t run', 'var(--amber)'] };
+
+function storeButton(x) {
+  const t = S.tasks.find((k) => k.id === `store:${x.id}` || (x.id === 'steam' && k.id === 'steam'));
+  if (t) return `<button class="btn" disabled>Installing… ${Math.round((taskPct[t.id]?.pct ?? t.pct ?? 0) * 100)}%</button>`;
+  if (x.appId) {
+    return isRunning(x.appId)
+      ? `<button class="btn" data-act="stop-app" data-id="${x.appId}">${icon('stop')}Stop</button>`
+      : `<button class="btn primary" data-act="play" data-id="${x.appId}">${icon('play')}Open</button>`;
+  }
+  return `<button class="btn glow" data-act="store-install" data-id="${x.id}" ${S.engine ? '' : 'disabled'}>${icon('download')}Install</button>`;
+}
+
+function viewStore() {
+  const steam = S.store.find((x) => x.id === 'steam');
+  const rest = S.store.filter((x) => x.id !== 'steam');
+  const card = (x) => `<div class="card store-card">
+    <div class="store-top"><div class="store-icon" style="background:${artFor(x.name)}">${esc(initial(x.name))}</div>
+      <div class="t"><b>${esc(x.name)}</b><span>${esc(x.kind)}</span></div></div>
+    <p>${esc(x.desc)}</p>
+    <div class="store-foot"><span class="compat" style="color:${COMPAT[x.compat][1]}">● ${COMPAT[x.compat][0]}</span>${storeButton(x)}</div>
+  </div>`;
   return `${engineBanner()}
     <div class="steam-hero">
       <div class="orb"></div>
-      <h2>${st.installed ? 'Steam is ready.' : 'Play your Windows Steam games on macOS.'}</h2>
-      <p>${st.installed ? 'Launch Steam, sign in and install games the usual way. When Steam closes, Umbra imports your installed games — with their cover art — into the Library. Or import them now.'
-        : 'Umbra creates a dedicated Windows 10 bottle, downloads the official Steam installer from Valve and sets it up — no Windows license needed.'}</p>
-      <div class="row" style="display:flex;gap:10px">${action}</div>
+      <div class="kicker" style="color:var(--cyan)">Recommended</div>
+      <h2>${steam.appId ? 'Steam is installed.' : 'Play your Steam games on your Mac.'}</h2>
+      <p>${steam.appId ? 'Open Steam, sign in and install games as usual. When Steam closes, your installed games show up in the Library with their cover art.'
+        : 'Installs Valve’s official Steam for Windows. No Windows license needed.'}</p>
+      <div class="row" style="display:flex;gap:10px">${storeButton(steam)}${steam.appId ? ` <button class="btn" data-act="steam-import">${icon('download')}Import my Steam games</button>` : ''}</div>
     </div>
+    <div class="section-h"><h2>Game Stores</h2></div>
+    <div class="store-grid">${rest.filter((x) => x.kind === 'Game store').map(card).join('')}</div>
+    <div class="section-h"><h2>Apps</h2></div>
+    <div class="store-grid">${rest.filter((x) => x.kind !== 'Game store').map(card).join('')}</div>
+    <div class="section-h"><h2>Have something else?</h2></div>
+    <div class="empty" data-act="run-exe"><div class="big-icon">${icon('file')}</div><h3>Run any Windows installer or program</h3><p>Choose an .exe or .msi, or drag it onto this window. Installed programs are added to your Library automatically.</p></div>
     <div class="section-h"><h2>What to expect</h2></div>
     <div class="notes">
       <div class="card"><b style="color:var(--green)">${icon('check')}Works well</b><span>Most DirectX 9–11 games, indie titles, older classics and many launchers.</span></div>
-      <div class="card"><b style="color:var(--amber)">${icon('bolt')}Depends</b><span>DirectX 12 titles need a DX12→Metal build of Wine (e.g. Game Porting Toolkit). Point Umbra at it in Engine.</span></div>
-      <div class="card"><b style="color:var(--red)">${icon('shield')}Won’t work</b><span>Games with kernel anti-cheat (Valorant, many competitive shooters) block Wine entirely.</span></div>
+      <div class="card"><b style="color:var(--amber)">${icon('bolt')}Depends</b><span>DirectX 12 games need D3DMetal. See Settings → Windows engine.</span></div>
+      <div class="card"><b style="color:var(--red)">${icon('shield')}Won’t work</b><span>Games with kernel anti-cheat (Valorant, many online shooters).</span></div>
     </div>`;
 }
 
-// ---------- Engine ----------
-function viewEngine() {
+// ---------- Settings ----------
+function viewSettings() {
   const e = S.engine;
   const t = S.tasks.find((x) => x.id === 'engine');
   const s = S.settings;
   const toggle = (key, title, desc) => `<div class="toggle-row"><div class="t"><b>${title}</b><span>${desc}</span></div><button class="switch ${s[key] ? 'on' : ''}" data-act="toggle" data-key="${key}"></button></div>`;
   const pct = Math.round((taskPct.engine?.pct ?? t?.pct ?? 0) * 100);
-  return `<div class="engine-grid">
+  return `${engineBanner()}<div class="card engine-card setup-again">
+      <div><b>Setup</b><span>Reinstall Steam, Windows essentials or game components any time.</span></div>
+      <button class="btn" data-act="open-wizard">${icon('bolt')}Run Setup Again</button>
+    </div>
+    <div class="engine-grid">
     <div class="card engine-card">
-      <h3>Wine Engine</h3>
+      <h3>Windows Engine</h3>
       <div class="engine-status">
         <div class="ring"><i>${icon(e ? 'check' : 'alert')}</i></div>
         <div><b>${e ? esc(e.version || 'Wine') : 'Not installed'}</b><span class="muted">${e ? `Source: ${esc(e.source)}` : 'Umbra needs Wine to translate Windows programs.'}</span></div>
@@ -333,14 +354,14 @@ function viewEngine() {
     </div>
     <div class="card engine-card">
       <h3>Performance</h3>
-      ${toggle('msync', 'MSync', 'Mach-based synchronization. Faster in most games.')}
-      ${toggle('esync', 'ESync', 'Event-fd synchronization fallback.')}
-      ${toggle('metalHud', 'Metal Performance HUD', 'FPS & GPU overlay for Metal-rendered games.')}
-      ${toggle('verboseLogs', 'Verbose logging', 'Show Wine warnings in the Console for debugging.')}
+      ${toggle('msync', 'Faster games', 'Uses MSync, which speeds up most games. Leave this on.')}
+      ${toggle('metalHud', 'Show FPS in every game', 'Adds Apple’s frame-rate counter. You can also turn it on for single games.')}
+      ${toggle('esync', 'Compatibility mode', 'Try this if a game freezes or stutters (ESync).')}
+      ${toggle('verboseLogs', 'Detailed logs', 'For troubleshooting: shows more in the Console.')}
     </div>
   </div>
   <div class="card engine-card" style="margin-top:18px">
-    <h3>Engines on this Mac</h3>
+    <h3>Windows Engines on this Mac</h3>
     ${ENGINES === null ? '<p class="muted">Looking for Wine engines…</p>' : ENGINES.length ? `<div class="comp-list">${ENGINES.map((x) => `
       <div class="comp"><div class="t"><b>${esc(x.source)} ${x.d3dmetal ? '<span class="tag-exp tag-dx">D3DMetal · DirectX 12</span>' : ''}</b><span class="mono">${esc(x.version || '')} · ${esc(x.path)}</span></div>
       ${S.engine?.path === x.path ? `<span class="comp-ok">${icon('check')}In use</span>` : `<button class="btn sm" data-act="use-engine" data-path="${esc(x.path)}">Use</button>`}</div>`).join('')}</div>`
@@ -426,36 +447,35 @@ const bottleOptions = (sel) => S.bottles.map((b) => `<option value="${b.id}" ${b
 
 async function ensureBottle() {
   if (S.bottles.length) return true;
-  if (!S.engine) { toast('Install the Wine engine first', 'error'); go('engine'); return false; }
+  if (!S.engine) { openWizard(); return false; }
   toast('Creating your first bottle…');
   await call('bottle:create', { name: 'Default', winver: 'win10' });
   return true;
 }
 
 async function runFileFlow(file, presetBottle) {
-  if (!S.engine) { toast('Install the Wine engine first', 'error'); go('engine'); return; }
-  if (!(await ensureBottle().catch(() => false))) return;
+  if (!S.engine || !S.bottles.length) { openWizard(); return; }
   const def = presetBottle || S.settings.lastBottleId || S.bottles[0].id;
   const guess = basename(file).replace(/\.(exe|msi|bat|cmd|lnk)$/i, '');
   const installer = /\.msi$/i.test(file) || /(setup|install|^inst[_-]|_inst\b)/i.test(basename(file));
-  modal(`<h3>Run Windows program</h3><p>Choose where this program should run.</p>
-    <div class="file-box"><div class="fi">${icon('file')}</div><div><b>${esc(basename(file))}</b><span>${esc(file)}</span></div></div>
-    <div class="field"><label>Bottle</label><select class="input" id="m-bottle">${bottleOptions(def)}</select></div>
-    <div class="field"><label>Arguments (optional)</label><input class="input" id="m-args" placeholder="-windowed"></div>
-    ${installer
-      ? `<div class="file-box" style="background:rgba(139,92,246,.08);border-color:rgba(139,92,246,.3)"><div class="fi">${icon('download')}</div><div><b>Looks like an installer</b><span>Whatever it installs goes into this bottle, and Umbra adds it to your Library when it finishes.</span></div></div>`
-      : `<label class="check"><input type="checkbox" id="m-add" checked><div><b>Add to Library</b><span>Keep it for one-click launching later</span></div></label>`}
-    <div class="modal-actions"><button class="btn ghost" data-close>Cancel</button><button class="btn primary" id="m-go">${icon('play')}Run</button></div>`,
+  modal(`<h3>${installer ? 'Install this program?' : 'Run this program?'}</h3><p>${installer ? 'It installs like it would on a PC. When it finishes, Umbra adds it to your Library.' : 'It opens in its own window on your Mac.'}</p>
+    <div class="file-box"><div class="fi">${icon(installer ? 'download' : 'file')}</div><div><b>${esc(basename(file))}</b><span>${esc(file)}</span></div></div>
+    ${installer ? '' : `<label class="check"><input type="checkbox" id="m-add" checked><div><b>Add to my Library</b><span>So you can open it again with one click</span></div></label>`}
+    <details class="more-opts"><summary>More options</summary>
+      ${S.bottles.length > 1 ? `<div class="field"><label>Windows environment</label><select class="input" id="m-bottle">${bottleOptions(def)}</select></div>` : ''}
+      <div class="field"><label>Launch options (optional)</label><input class="input" id="m-args" placeholder="e.g. -windowed"></div>
+    </details>
+    <div class="modal-actions"><button class="btn ghost" data-close>Cancel</button><button class="btn primary" id="m-go">${icon(installer ? 'download' : 'play')}${installer ? 'Install' : 'Run'}</button></div>`,
   (el, close) => {
     $('#m-go', el).onclick = async () => {
-      const bottleId = $('#m-bottle', el).value;
+      const bottleId = $('#m-bottle', el)?.value || def;
       const args = $('#m-args', el).value;
       close();
       if ($('#m-add', el)?.checked) {
         const a = await call('app:add', { bottleId, exe: file, name: guess, args });
         await call('app:run', a.id);
       } else await call('run:file', { bottleId, file, args });
-      toast(installer ? `Installing into “${S.bottles.find((b) => b.id === bottleId)?.name}”…` : `Launching ${basename(file)}`);
+      toast(installer ? `Installing ${guess}… it’ll appear in your Library when done` : `Opening ${guess}…`);
     };
   });
 }
@@ -466,7 +486,7 @@ async function pickAndRun(bottleId) {
 }
 
 function newBottleModal() {
-  if (!S.engine) { toast('Install the Wine engine first', 'error'); go('engine'); return; }
+  if (!S.engine) { openWizard(); return; }
   modal(`<h3>New Bottle</h3><p>A clean Windows environment with its own C: drive.</p>
     <div class="field"><label>Name</label><input class="input" id="m-name" placeholder="Games" value="${S.bottles.length ? '' : 'Default'}"></div>
     <div class="field"><label>Windows version</label><select class="input" id="m-ver">${WINVERS.map(([v, n]) => `<option value="${v}" ${v === 'win10' ? 'selected' : ''}>${n}</option>`).join('')}</select></div>
@@ -570,6 +590,147 @@ async function componentsModal(bottleId) {
   });
 }
 
+// ---------- per-app settings ----------
+function appSettingsModal(id) {
+  const a = S.apps.find((x) => x.id === id);
+  const b = S.bottles.find((x) => x.id === a.bottleId) || {};
+  const sw = (key, on, title, desc) => `<div class="toggle-row"><div class="t"><b>${title}</b><span>${desc}</span></div><button class="switch ${on ? 'on' : ''}" data-sw="${key}"></button></div>`;
+  const shared = S.apps.filter((x) => x.bottleId === a.bottleId).length > 1;
+  const fixing = S.tasks.some((t) => t.id === `fix:${a.id}`);
+  const missing = ['vcrun', 'directx9'].filter((c) => !b.components?.[c]).length;
+  modal(`<div class="settings-head"><div class="tool-icon big" style="background:${artFor(a.name)}">${a.icon ? img([fileUrl(a.icon)], 'tool-img') : esc(initial(a.name))}</div>
+      <div><h3>${esc(a.name)}</h3><p class="muted">${fmtTime(a.playtime)}</p></div></div>
+    <div class="field"><label>Name</label><input class="input" id="s-name" value="${esc(a.name)}"></div>
+    <div class="settings-group">
+      ${sw('hud', a.hud, 'Show FPS counter', 'Frame rate and GPU overlay while it runs.')}
+      ${sw('dxvk', !!b.dxvk, 'Faster graphics (DXVK)', `Speeds up most DirectX 10/11 games. Turn off if it looks wrong.${shared ? ' Applies to everything in this Windows environment.' : ''}`)}
+      ${sw('retina', !!b.retina, 'Sharper on Retina screens', 'Full resolution instead of upscaled. Can lower FPS.')}
+    </div>
+    <div class="field"><label>Windows version</label><select class="input" id="s-ver">${WINVERS.map(([v, n]) => `<option value="${v}" ${v === b.winver ? 'selected' : ''}>${n}</option>`).join('')}</select>
+      <span class="hint">Older games sometimes need Windows 7 or XP.</span></div>
+    <details class="more-opts"><summary>Launch options</summary>
+      <div class="field"><input class="input" id="s-args" value="${esc(a.args)}" placeholder="e.g. -windowed -dx11"></div>
+    </details>
+    <div class="fix-box"><div><b>Won’t start or crashes?</b><span>${missing ? 'Installs Visual C++ and DirectX, which most games need.' : 'Visual C++ and DirectX are already installed.'}</span></div>
+      <button class="btn" id="s-fix" ${fixing || !missing ? 'disabled' : ''}>${icon('bolt')}${fixing ? 'Fixing…' : 'Fix Common Problems'}</button></div>
+    <div class="modal-actions spread">
+      <div><button class="btn ghost danger" id="s-remove">${icon('trash')}Remove</button></div>
+      <div><button class="btn ghost" data-close>Cancel</button><button class="btn primary" id="s-save">Save</button></div>
+    </div>`,
+  (el, close) => {
+    const state = { hud: !!a.hud, dxvk: !!b.dxvk, retina: !!b.retina };
+    el.querySelectorAll('[data-sw]').forEach((btn) => btn.onclick = () => { state[btn.dataset.sw] = !state[btn.dataset.sw]; btn.classList.toggle('on'); });
+    $('#s-fix', el).onclick = async () => { close(); await call('app:fix', a.id); toast(`${a.name}: Visual C++ and DirectX installed`); };
+    $('#s-remove', el).onclick = async () => { close(); await call('app:remove', a.id); toast(`Removed ${a.name} from your Library`); };
+    $('#s-save', el).onclick = async () => {
+      close();
+      await call('app:update', a.id, { name: $('#s-name', el).value.trim() || a.name, args: $('#s-args', el).value, hud: state.hud });
+      const ver = $('#s-ver', el).value;
+      if (ver !== b.winver) await call('bottle:winver', b.id, ver);
+      if (state.retina !== !!b.retina) await call('bottle:retina', b.id, state.retina);
+      if (state.dxvk !== !!b.dxvk) await call('bottle:dxvk', b.id, state.dxvk);
+      toast('Settings saved');
+    };
+  });
+}
+
+// ---------- welcome wizard ----------
+let wizard = null; // { el, step }
+let wizardDismissed = false;
+const SETUP_CHOICES = [
+  ['steam', 'Steam', 'Valve’s game store and your PC game library.', true],
+  ['tools', 'Windows essentials', 'Task Manager, File Explorer, Notepad, Command Prompt, Control Panel and more.', true],
+  ['components', 'Game components', 'Visual C++ and DirectX. Most games need these.', true],
+  ['dotnet', '.NET for apps', 'Needed by some Windows apps and mod managers.', false],
+];
+
+function openWizard() {
+  if (wizard) return;
+  const el = document.createElement('div');
+  el.className = 'wizard';
+  $('#modal-root').appendChild(el);
+  wizard = { el, step: S.tasks.some((t) => t.id === 'setup') ? 'progress' : 'welcome', choices: Object.fromEntries(SETUP_CHOICES.map(([k, , , on]) => [k, on])) };
+  paintWizard();
+}
+
+function closeWizard() {
+  wizard?.el.remove();
+  wizard = null;
+  wizardDismissed = true;
+}
+
+function paintWizard(t) {
+  if (!wizard) return;
+  const w = wizard;
+  const eclipse = '<div class="eclipse sm"><div class="corona"></div><div class="ring"></div><div class="moon"></div></div>';
+  let body;
+  if (w.step === 'welcome') {
+    body = `${eclipse}<h1>Welcome to Umbra</h1>
+      <p>Play Windows games and use Windows apps on your Mac. Let’s get everything ready. It takes a few minutes and you only do it once.</p>
+      <div class="wz-actions"><button class="btn lg glow" data-wz="choose">Get Started</button></div>
+      <button class="wz-skip" data-wz="skip">Skip for now</button>`;
+  } else if (w.step === 'choose') {
+    body = `<h2>What should we install?</h2><p>You can change this later in Settings.</p>
+      <div class="wz-choices">${SETUP_CHOICES.map(([k, name, desc]) => `<label class="wz-choice ${w.choices[k] ? 'on' : ''}"><input type="checkbox" data-choice="${k}" ${w.choices[k] ? 'checked' : ''}>
+        <span class="wz-check">${icon('check')}</span><span><b>${name}</b><small>${desc}</small></span></label>`).join('')}</div>
+      <p class="faint wz-note">Always included: the Windows compatibility engine${S.cpu.appleSilicon ? ', Rosetta 2' : ''} and a Windows 10 environment.</p>
+      <div class="wz-actions"><button class="btn lg ghost" data-wz="welcome">Back</button><button class="btn lg glow" data-wz="install">${icon('download')}Install</button></div>`;
+  } else if (w.step === 'progress') {
+    const task = t || S.tasks.find((x) => x.id === 'setup') || {};
+    const steps = task.steps || w.steps || [];
+    w.steps = steps;
+    const pct = Math.round((task.pct ?? 0) * 100);
+    body = `${eclipse}<h2>Setting things up…</h2><p>${esc(task.detail || 'Starting…')}</p>
+      <div class="wz-bar"><i style="width:${Math.max(2, pct)}%"></i></div><div class="wz-pct">${pct}%</div>
+      <ul class="wz-steps">${steps.map((x) => `<li class="${x.state}"><span class="wz-dot">${x.state === 'done' ? icon('check') : x.state === 'failed' ? icon('alert') : ''}</span>${esc(x.label)}${x.state === 'failed' ? `<small>${esc(x.error || 'Failed')}</small>` : ''}</li>`).join('')}</ul>
+      <button class="wz-skip" data-wz="hide">Hide (keeps going in the background)</button>`;
+  } else if (w.step === 'done') {
+    const failed = (w.steps || []).filter((x) => x.state === 'failed');
+    body = `${eclipse}<h1>You’re all set</h1>
+      <p>${failed.length ? `Almost everything is ready. ${failed.map((x) => x.label).join(', ')} couldn’t be installed right now. You can retry from Get Apps or Settings.` : 'Everything is installed. Pick something from your Library, or get more apps.'}</p>
+      <div class="wz-actions"><button class="btn lg glow" data-wz="finish">${icon('library')}Open My Library</button>${S.steam.appId ? `<button class="btn lg" data-wz="steam">${icon('play')}Open Steam</button>` : ''}</div>`;
+  } else if (w.step === 'error') {
+    body = `<h2>Setup hit a problem</h2><p>${esc(w.error)}</p>
+      <div class="wz-actions"><button class="btn lg ghost" data-wz="skip">Close</button><button class="btn lg glow" data-wz="install">Try Again</button></div>`;
+  }
+  // Only animate in when the step changes, not on every progress update.
+  w.el.innerHTML = `<div class="wz-card ${w.painted === w.step ? 'still' : ''}">${body}</div><div class="wz-foot">MADE BY VINI</div>`;
+  w.painted = w.step;
+  w.el.querySelectorAll('[data-choice]').forEach((c) => c.onchange = () => { w.choices[c.dataset.choice] = c.checked; paintWizard(); });
+  w.el.querySelectorAll('[data-wz]').forEach((b) => b.onclick = () => wizardAction(b.dataset.wz));
+}
+
+async function wizardAction(a) {
+  const w = wizard;
+  if (!w) return;
+  if (a === 'skip' || a === 'hide') return closeWizard();
+  if (a === 'finish') { closeWizard(); return go('library'); }
+  if (a === 'steam') { closeWizard(); go('library'); return call('app:run', S.steam.appId); }
+  if (a !== 'install') { w.step = a; return paintWizard(); }
+  w.step = 'progress';
+  w.steps = null;
+  paintWizard();
+  try {
+    const steps = await api.call('setup:all', w.choices);
+    if (!wizard) return toast('Umbra is set up and ready');
+    wizard.steps = steps;
+    wizard.step = 'done';
+  } catch (e) {
+    if (!wizard) return toast(`Setup failed: ${e.message}`, 'error');
+    wizard.step = 'error';
+    wizard.error = e.message;
+  }
+  paintWizard();
+}
+
+function addMenu(anchor) {
+  menu(anchor, [
+    { icon: 'file', label: 'Run or install a Windows program…', run: () => pickAndRun() },
+    { icon: 'download', label: 'Get Apps (Steam, Epic, GOG…)', run: () => go('store') },
+    { icon: 'plus', label: 'Add a program to the Library…', run: () => addAppModal() },
+  ]);
+}
+
 function menu(anchor, items) {
   document.querySelector('.menu')?.remove();
   const m = document.createElement('div');
@@ -595,6 +756,14 @@ function menu(anchor, items) {
 // ---------- actions ----------
 const actions = {
   'run-exe': () => pickAndRun(),
+  'add-menu': (el) => addMenu(el),
+  'app-settings': (el) => appSettingsModal(el.dataset.id),
+  'open-wizard': () => openWizard(),
+  'store-install': async (el) => {
+    const item = S.store.find((x) => x.id === el.dataset.id);
+    await call('store:install', item.id);
+    toast(`${item.name} is installed and in your Library`);
+  },
   'add-app': addAppModal,
   'new-bottle': newBottleModal,
   play: async (el) => {
@@ -611,7 +780,7 @@ const actions = {
     menu(el, [
       { icon: 'play', label: 'Play', run: () => call('app:run', a.id) },
       { icon: 'star', label: a.favorite ? 'Remove from Favorites' : 'Add to Favorites', run: () => call('app:update', a.id, { favorite: !a.favorite }) },
-      { icon: 'edit', label: 'Edit…', run: () => editAppModal(a) },
+      { icon: 'sliders', label: 'Settings…', run: () => appSettingsModal(a.id) },
       { icon: 'folder', label: 'Show in Finder', run: () => call('app:reveal', a.id) },
       { icon: 'window', label: 'Add to Mac Applications', run: async () => { await call('app:launcher', a.id); toast(`${a.name} is now in ~/Applications/Umbra — find it in Launchpad or Spotlight`); } },
       '-',
@@ -648,7 +817,7 @@ const actions = {
     toast('Umbra is ready — drop in any .exe, or install Steam');
   },
   'install-engine': async () => {
-    go('engine');
+    go('settings');
     const e = await call('engine:install');
     toast(`Engine installed: ${e?.version || 'Wine'}`);
   },
@@ -722,9 +891,14 @@ window.addEventListener('drop', (e) => {
 });
 
 document.addEventListener('keydown', (e) => {
-  if (e.key === 'Escape') { document.querySelector('.menu')?.remove(); $('#modal-root').lastElementChild?.remove(); }
+  if (e.key === 'Escape') {
+    document.querySelector('.menu')?.remove();
+    const last = $('#modal-root').lastElementChild;
+    if (last && !last.classList.contains('wizard')) last.remove();
+  }
   if ((e.metaKey || e.ctrlKey) && e.key === 'o') { e.preventDefault(); pickAndRun(); }
   if ((e.metaKey || e.ctrlKey) && /^[1-5]$/.test(e.key)) go(Object.keys(VIEWS)[+e.key - 1]);
+  if (e.key === 'Escape' && wizard && wizard.step !== 'progress') closeWizard();
 });
 
 // ---------- live updates ----------
@@ -735,8 +909,9 @@ api.on('state', (s) => {
 });
 api.on('task', (t) => {
   taskPct[t.id] = { pct: t.pct, detail: t.detail };
+  if (t.id === 'setup' && wizard?.step === 'progress') paintWizard(t);
   renderDock();
-  if (view === 'engine' || view === 'steam' || (view === 'library' && t.id === 'setup')) render();
+  if (view === 'settings' || view === 'store' || (view === 'library' && t.id === 'setup')) render();
 });
 api.on('log', (l) => {
   logs.push(l);
@@ -761,7 +936,6 @@ api.on('installed', ({ bottleId, installer, added, candidates }) => {
 });
 api.on('menu', (name) => {
   if (name.startsWith('nav:')) return go(name.slice(4));
-  if (name === 'install-steam') { go('steam'); if (!S.steam.installed) actions['install-steam'](); return; }
   actions[name]?.();
 });
 api.on('crashed', ({ name, code }) => {
@@ -773,4 +947,5 @@ api.on('open-files', (files) => { const f = files.find((p) => RUNNABLE.test(p));
   S = await api.call('state');
   logs = await api.call('logs');
   render();
+  if (!S.settings.setupDone) openWizard();
 })();

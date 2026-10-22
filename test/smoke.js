@@ -69,6 +69,27 @@ app.whenReady().then(async () => {
     console.log(`PASS: Mac launcher created at ${where}`);
   } catch (e) { console.log(`WARN: Mac launcher failed: ${e.message}`); }
 
+  // Pre-installed Windows tools: added to the library and Task Manager actually opens.
+  const tools = runtime.addWindowsTools(b.id);
+  console.log('Windows tools added:', tools.map((t) => t.name).join(', '));
+  const tm = tools.find((t) => t.name === 'Task Manager');
+  if (!tm) throw new Error('Task Manager was not added to the library');
+  const tmRun = runtime.runApp(tm.id);
+  await sleep(8000);
+  const tmAlive = runtime.runningList().some((r) => r.runId === tmRun.runId);
+  try { execFileSync('/usr/sbin/screencapture', ['-x', path.join(shots, 'mac-task-manager.png')]); } catch {}
+  await runtime.kill(b.id);
+  if (!tmAlive) throw new Error('Task Manager exited right away');
+  console.log('PASS: Windows tools pre-installed and Task Manager runs');
+
+  // Every Get Apps download link should still resolve.
+  for (const item of require('../src/catalog').STORE.filter((x) => x.url)) {
+    try {
+      const res = await fetch(item.url, { method: 'HEAD', redirect: 'follow', headers: { 'User-Agent': 'Mozilla/5.0 Umbra' } });
+      console.log(`${res.ok ? 'PASS' : 'WARN'}: Get Apps link for ${item.name} → HTTP ${res.status}`);
+    } catch (e) { console.log(`WARN: Get Apps link for ${item.name} failed: ${e.message}`); }
+  }
+
   // Components and DXVK: reported, not fatal, since they depend on third-party downloads.
   for (const [label, fn] of [
     ['Visual C++ component', () => runtime.installComponent(b.id, 'vcrun', progress())],

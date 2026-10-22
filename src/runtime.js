@@ -9,6 +9,7 @@ const engine = require('./engine');
 const icons = require('./icons');
 const steamlib = require('./steamlib');
 const components = require('./components');
+const catalog = require('./catalog');
 
 const STEAM_SETUP_URL = 'https://cdn.akamai.steamstatic.com/client/installer/SteamSetup.exe';
 const STEAM_ARGS = '-cef-disable-gpu -cef-disable-sandbox';
@@ -253,7 +254,8 @@ function launch({ bottleId, file, args = '', appId = null, name }) {
   const label = name || path.basename(file);
   const installer = !appId && isInstaller(file);
   const before = installer ? snapshot(b.id) : null;
-  const child = spawn(bin, [...argsFor(file), ...splitArgs(args)], { env: wineEnv(b), cwd: path.dirname(file) });
+  const appEntry = appId && store.get().apps.find((x) => x.id === appId);
+  const child = spawn(bin, [...argsFor(file), ...splitArgs(args)], { env: wineEnv(b, appEntry?.hud ? { MTL_HUD_ENABLED: '1' } : {}), cwd: path.dirname(file) });
   const entry = { runId, appId, bottleId, name: label, started: Date.now(), pid: child.pid };
   running.set(runId, { ...entry, child });
   pipe(child, label);
@@ -388,7 +390,7 @@ function shortcutTargets(lnk, exe) {
 }
 
 // After an installer finishes, adds what it installed to the library.
-async function trackInstall(b, before, label) {
+async function trackInstall(b, before, label, quiet = false) {
   log(`Installer finished — looking for what ${label} installed…`);
   // Installers often hand off to child processes; wait for the bottle to go idle (capped,
   // since "launch now" checkboxes can start the installed app right away).
@@ -405,7 +407,9 @@ async function trackInstall(b, before, label) {
   const added = picks.slice(0, 5).map((p) => addApp({ bottleId: b.id, exe: p.exe, name: p.name }));
   const rest = exes.filter((e) => !added.some((a) => a.exe === e)).map((exe) => ({ exe, name: prettyName(exe) }));
   log(added.length ? `Added to Library: ${added.map((a) => a.name).join(', ')}` : `${exes.length} new program(s) found in “${b.name}”`);
-  emit('installed', { bottleId: b.id, installer: label, added: added.map((a) => a.name), candidates: added.length ? [] : rest });
+  const result = { bottleId: b.id, installer: label, added: added.map((a) => a.name), candidates: added.length ? [] : rest };
+  if (!quiet) emit('installed', result);
+  return { added, rest };
 }
 
 function prettyName(exe) {
@@ -415,7 +419,7 @@ function prettyName(exe) {
   return n.replace(/[_-]+/g, ' ').replace(/([a-z])([A-Z])/g, '$1 $2').trim();
 }
 
-function addApp({ bottleId, exe, name, args = '', steamAppId }) {
+function addApp({ bottleId, exe, name, args = '', steamAppId, category, catalogId }) {
   bottle(bottleId);
   const game = steamAppId ? null : steamlib.gameForExe(exe);
   const a = {
@@ -423,6 +427,8 @@ function addApp({ bottleId, exe, name, args = '', steamAppId }) {
     bottleId, exe, name: game?.name || name || prettyName(exe), args, added: Date.now(), playtime: 0,
     steamAppId: steamAppId || game?.appid || null,
     icon: icons.extract(exe),
+    ...(category ? { category } : {}),
+    ...(catalogId ? { catalogId } : {}),
   };
   store.get().apps.push(a);
   store.save();
@@ -432,7 +438,7 @@ function addApp({ bottleId, exe, name, args = '', steamAppId }) {
 function updateApp(id, patch) {
   const a = store.get().apps.find((x) => x.id === id);
   if (!a) throw new Error('App not found');
-  for (const k of ['name', 'args', 'bottleId', 'exe', 'favorite']) if (patch[k] !== undefined) a[k] = patch[k];
+  for (const k of ['name', 'args', 'bottleId', 'exe', 'favorite', 'hud']) if (patch[k] !== undefined) a[k] = patch[k];
   store.save();
   return a;
 }
@@ -509,6 +515,80 @@ ${iconKey}
   return root;
 }
 
+// The bottle new installs go into when the user hasn't picked one.
+function mainBottle() {
+  const s = store.get();
+  return s.bottles.find((b) => b.id === s.settings.lastBottleId) || s.bottles.find((b) => b.ready) || s.bottles[0] || null;
+}
+
+// Adds the Windows tools that ship inside every bottle to the Library.
+function addWindowsTools(bottleId) {
+  const c = driveC(bottleId);
+  const known = new Set(store.get().apps.map((a) => a.exe.toLowerCase()));
+  const added = [];
+  for (const t of catalog.WINDOWS_TOOLS) {
+    const exe = path.join(c, t.rel);
+    if (!fs.existsSync(exe) || known.has(exe.toLowerCase())) continue;
+    const a = addApp({ bottleId, exe, name: t.name, args: t.args || '', category: 'tool' });
+    if (t.iconFrom) a.icon = icons.extract(path.join(c, t.iconFrom)) || a.icon;
+    added.push(a);
+  }
+  return added;
+}
+
+function storeStatus() {
+  const apps = store.get().apps;
+  const steam = steamStatus();
+  return catalog.STORE.map(({ id, name, kind, compat, desc }) => {
+    const app = id === 'steam' ? apps.find((a) => a.id === steam.appId) : apps.find((a) => a.catalogId === id);
+    return { id, name, kind, compat, desc, appId: app?.id || null };
+  });
+}
+
+// Downloads a Get Apps item and installs it into the main bottle.
+async function installFromStore(id, onProgress) {
+  const item = catalog.STORE.find((x) => x.id === id);
+  if (!item) throw new Error('Unknown app');
+  if (item.special === 'steam') return installSteam(onProgress);
+  requireEngine();
+  const b = mainBottle();
+  if (!b) throw new Error('Run setup first so there is a Windows environment to install into');
+  const file = path.join(engine.cacheDir(), item.file);
+  if (!fs.existsSync(file)) {
+    await engine.download(item.url, file, (f) => onProgress(0.05 + (f ?? 0) * 0.5, `Downloading ${item.name}…`));
+  }
+  onProgress(0.6, item.args ? `Installing ${item.name}…` : `Follow the ${item.name} installer window…`);
+  const before = snapshot(b.id);
+  const code = await wineRun(b, [...argsFor(file), ...item.args || []], { tag: item.name, cwd: path.dirname(file) });
+  if (code && code !== 3010) log(`${item.name} installer exited with code ${code}`, 'warn');
+  onProgress(0.9, 'Adding it to your Library…');
+  let { added, rest } = await trackInstall(b, before, item.name, true);
+  if (!added.length) {
+    const pick = rest.find((r) => item.match?.test(r.exe)) || rest[0];
+    if (pick) added = [addApp({ bottleId: b.id, exe: pick.exe, name: item.name })];
+  }
+  const main = added.find((a) => item.match?.test(a.exe)) || added[0];
+  if (!main) throw new Error(`${item.name} didn’t finish installing. Check the Console for details.`);
+  main.catalogId = item.id;
+  main.name = item.name;
+  store.save();
+  onProgress(1, `${item.name} is installed`);
+  return main;
+}
+
+// Installs Visual C++ and DirectX 9 extras if the app's bottle is missing them.
+async function fixCommonProblems(appId, onProgress) {
+  const a = store.get().apps.find((x) => x.id === appId);
+  if (!a) throw new Error('App not found');
+  const b = bottle(a.bottleId);
+  const todo = ['vcrun', 'directx9'].filter((c) => !b.components?.[c]);
+  if (!todo.length) { onProgress(1, 'Nothing missing'); return []; }
+  for (const [i, c] of todo.entries()) {
+    await installComponent(b.id, c, (f, l) => onProgress((i + (f ?? 0)) / todo.length, l));
+  }
+  return todo;
+}
+
 function removeApp(id) {
   const s = store.get();
   s.apps = s.apps.filter((a) => a.id !== id);
@@ -539,12 +619,10 @@ function steamStatus() {
 async function installSteam(onProgress) {
   requireEngine();
   const s = store.get();
-  let b = s.bottles.find((x) => x.steam);
-  if (!b) {
-    b = await createBottle({ name: 'Steam', winver: 'win10' }, (f, label) => onProgress(f * 0.35, label));
-    b.steam = true;
-    store.save();
-  }
+  let b = s.bottles.find((x) => x.steam) || mainBottle();
+  if (!b) b = await createBottle({ name: 'Default', winver: 'win10' }, (f, label) => onProgress(f * 0.35, label));
+  b.steam = true;
+  store.save();
   const setup = path.join(engine.cacheDir(), 'SteamSetup.exe');
   if (!fs.existsSync(setup)) {
     await engine.download(STEAM_SETUP_URL, setup, (f) => onProgress(0.35 + (f ?? 0) * 0.25, 'Downloading Steam installer…'));
@@ -562,5 +640,5 @@ async function installSteam(onProgress) {
 
 module.exports = {
   init, setEngine, getEngine, createBottle, deleteBottle, setWinver, setRetina, launch, runningList, stop, kill,
-  tool, driveC, scan, isInstaller, createMacLauncher, installComponent, runWinetricks, setDxvk, addApp, refreshIcons, importSteamGames, updateApp, removeApp, runApp, steamStatus, installSteam, prefixOf, bottle,
+  tool, driveC, scan, isInstaller, mainBottle, addWindowsTools, storeStatus, installFromStore, fixCommonProblems, createMacLauncher, installComponent, runWinetricks, setDxvk, addApp, refreshIcons, importSteamGames, updateApp, removeApp, runApp, steamStatus, installSteam, prefixOf, bottle,
 };

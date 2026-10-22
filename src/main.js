@@ -83,6 +83,7 @@ function state() {
     cpu: cpuInfo,
     running: runtime.runningList(),
     steam: runtime.steamStatus(),
+    store: runtime.storeStatus(),
     tasks: [...tasks.values()],
     version: app.getVersion(),
     update,
@@ -104,7 +105,7 @@ async function task(id, label, fn) {
       t.pct = pct;
       if (detail) t.detail = detail;
       send('task', t);
-    });
+    }, t);
   } finally {
     tasks.delete(id);
     pushState();
@@ -230,30 +231,63 @@ handle('engine:choose', async () => {
   runtime.setEngine(eng);
   return eng;
 });
-// First-run setup: Rosetta, the Wine engine, a Windows 10 bottle and Visual C++.
-handle('setup:all', () => task('setup', 'Setting up Umbra', async (p) => {
-  if (cpuInfo.appleSilicon && !cpuInfo.rosetta) {
-    p(0.02, 'Installing Rosetta 2…');
-    await engine.installRosetta();
-    cpuInfo = await engine.cpu();
-  }
-  if (!runtime.getEngine()) {
-    const eng = await engine.install((f, l) => p(0.05 + f * 0.5, l));
-    runtime.setEngine(eng);
-  }
-  let b = store.get().bottles.find((x) => x.ready) || store.get().bottles[0];
-  if (!b) b = await runtime.createBottle({ name: 'Default', winver: 'win10' }, (f, l) => p(0.55 + f * 0.25, l));
-  if (!b.components?.vcrun) {
+// First-run setup. Each step reports its own state so the welcome screen can
+// show a checklist; optional steps that fail are reported and skipped.
+handle('setup:all', (opts = {}) => task('setup', 'Setting up Umbra', async (p, t) => {
+  const want = { steam: true, tools: true, components: true, dotnet: false, ...opts };
+  const steps = [
+    ...(cpuInfo.appleSilicon ? [{ id: 'rosetta', label: 'Rosetta 2 (runs Windows code on Apple Silicon)', required: true }] : []),
+    { id: 'engine', label: 'Windows compatibility engine', required: true },
+    { id: 'bottle', label: 'Windows 10 environment', required: true },
+    ...(want.tools ? [{ id: 'tools', label: 'Windows essentials (Task Manager, File Explorer…)' }] : []),
+    ...(want.components ? [{ id: 'components', label: 'Game components (Visual C++, DirectX)' }] : []),
+    ...(want.dotnet ? [{ id: 'dotnet', label: '.NET for Windows apps' }] : []),
+    ...(want.steam ? [{ id: 'steam', label: 'Steam' }] : []),
+  ].map((x) => ({ ...x, state: 'pending' }));
+  t.steps = steps;
+  const span = 1 / steps.length;
+  let b = runtime.mainBottle();
+  const run = {
+    rosetta: async () => { if (!cpuInfo.rosetta) { await engine.installRosetta(); cpuInfo = await engine.cpu(); } },
+    engine: async (sp) => { if (!runtime.getEngine()) runtime.setEngine(await engine.install(sp)); },
+    bottle: async (sp) => { if (!b) b = await runtime.createBottle({ name: 'Default', winver: 'win10' }, sp); },
+    tools: async () => { runtime.addWindowsTools(b.id); },
+    components: async (sp) => {
+      for (const [i, c] of ['vcrun', 'directx9'].entries()) {
+        if (!b.components?.[c]) await runtime.installComponent(b.id, c, (f, l) => sp((i + (f ?? 0)) / 2, l));
+      }
+    },
+    dotnet: async (sp) => { if (!b.components?.dotnet8) await runtime.installComponent(b.id, 'dotnet8', sp); },
+    steam: async (sp) => { if (!runtime.steamStatus().installed) await runtime.installSteam(sp); },
+  };
+  for (const [i, step] of steps.entries()) {
+    step.state = 'active';
+    p(i * span, step.label);
     try {
-      await runtime.installComponent(b.id, 'vcrun', (f, l) => p(0.8 + f * 0.2, l));
+      await run[step.id]((f, l) => p((i + Math.min(1, f ?? 0)) * span, l || step.label));
+      step.state = 'done';
     } catch (e) {
-      runtimeLog(`Visual C++ could not be installed (${e.message}); you can retry from Bottles → Components.`, 'warn');
+      step.state = 'failed';
+      step.error = e.message;
+      runtimeLog(`Setup: ${step.label} failed: ${e.message}`, 'warn');
+      if (step.required) { p(i * span, step.error); throw e; }
     }
+    p((i + 1) * span, step.label);
   }
   store.get().settings.setupDone = true;
   store.save();
   p(1, 'All set');
+  return steps;
 }));
+handle('store:list', () => runtime.storeStatus());
+handle('store:install', (id) => {
+  const item = runtime.storeStatus().find((x) => x.id === id);
+  return task(`store:${id}`, `Installing ${item?.name || id}`, (p) => runtime.installFromStore(id, p));
+});
+handle('app:fix', (id) => {
+  const a = store.get().apps.find((x) => x.id === id);
+  return task(`fix:${id}`, `Fixing ${a?.name || 'app'}`, (p) => runtime.fixCommonProblems(id, p));
+});
 handle('engine:list', () => engine.detectAll());
 handle('engine:use', async (p) => {
   const eng = await engine.detect(p);
@@ -370,7 +404,7 @@ app.whenReady().then(() => {
           { label: 'Add App to Library…', accelerator: 'Cmd+Shift+A', click: cmd('add-app') },
           { label: 'New Bottle…', accelerator: 'Cmd+N', click: cmd('new-bottle') },
           { type: 'separator' },
-          { label: 'Install Steam', click: cmd('install-steam') },
+          { label: 'Get Apps…', click: () => send('menu', 'nav:store') },
           { type: 'separator' },
           { role: 'close' },
         ],
@@ -379,7 +413,8 @@ app.whenReady().then(() => {
       {
         label: 'View',
         submenu: [
-          ...['Library', 'Bottles', 'Steam', 'Engine', 'Console'].map((v, i) => ({ label: v, accelerator: `Cmd+${i + 1}`, click: () => send('menu', `nav:${v.toLowerCase()}`) })),
+          ...[['Library', 'library'], ['Get Apps', 'store'], ['Settings', 'settings'], ['Bottles', 'bottles'], ['Console', 'console']]
+            .map(([label, id], i) => ({ label, accelerator: `Cmd+${i + 1}`, click: () => send('menu', `nav:${id}`) })),
           { type: 'separator' },
           { role: 'reload' }, { role: 'togglefullscreen' },
         ],
