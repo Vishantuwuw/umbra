@@ -9,6 +9,14 @@ app.setPath('userData', home);
 const shots = process.env.SHOTS_DIR || home;
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 const pct = (f) => `${String(Math.round((f ?? 0) * 100)).padStart(3)}%`;
+// Progress printer that only logs when the message or a 10% step changes.
+const progress = () => {
+  let last = '';
+  return (f, label) => {
+    const key = `${Math.floor((f ?? 0) * 10)}|${(label || '').replace(/\d+/g, '')}`;
+    if (key !== last) { last = key; console.log(pct(f), label); }
+  };
+};
 
 app.whenReady().then(async () => {
   const store = require('../src/store');
@@ -37,7 +45,7 @@ app.whenReady().then(async () => {
   if (!eng?.version) throw new Error('Engine did not report a version');
   runtime.setEngine(eng);
 
-  const b = await runtime.createBottle({ name: 'Smoke Test', winver: 'win10' }, (f, l) => console.log(pct(f), l));
+  const b = await runtime.createBottle({ name: 'Smoke Test', winver: 'win10' }, progress());
 
   // Run an installer; Umbra should add what it installed to the library.
   const installed = new Promise((r) => { onInstalled = r; });
@@ -63,8 +71,8 @@ app.whenReady().then(async () => {
 
   // Components and DXVK: reported, not fatal, since they depend on third-party downloads.
   for (const [label, fn] of [
-    ['Visual C++ component', () => runtime.installComponent(b.id, 'vcrun', (f, l) => console.log(pct(f), l))],
-    ['DXVK', () => runtime.setDxvk(b.id, true, (f, l) => console.log(pct(f), l))],
+    ['Visual C++ component', () => runtime.installComponent(b.id, 'vcrun', progress())],
+    ['DXVK', () => runtime.setDxvk(b.id, true, progress())],
   ]) {
     try { await fn(); console.log(`PASS: ${label}`); } catch (e) { console.log(`WARN: ${label} failed: ${e.message}`); }
   }

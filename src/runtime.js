@@ -207,7 +207,9 @@ async function setDxvk(bottleId, on, onProgress = () => {}) {
   if (process.env.GITHUB_TOKEN) headers.Authorization = `Bearer ${process.env.GITHUB_TOKEN}`;
   const res = await fetch(DXVK_API, { headers });
   if (!res.ok) throw new Error(`Could not reach DXVK-macOS releases (HTTP ${res.status})`);
-  const asset = (await res.json()).flatMap((r) => r.assets || []).find((a) => /\.tar\.(gz|xz)$/.test(a.name));
+  const assets = (await res.json()).flatMap((r) => r.assets || []).filter((a) => /\.tar\.(gz|xz)$/.test(a.name));
+  // Prefer the drop-in build (x64/x32 folders) over the "-builtin" one made for Wine's own lib dir.
+  const asset = assets.find((a) => !/builtin/i.test(a.name)) || assets[0];
   if (!asset) throw new Error('No DXVK-macOS build found');
   const archive = path.join(engine.cacheDir(), asset.name);
   if (!fs.existsSync(archive)) await engine.download(asset.browser_download_url, archive, (f) => onProgress(0.1 + (f ?? 0) * 0.5, `Downloading ${asset.name}…`));
@@ -218,8 +220,8 @@ async function setDxvk(bottleId, on, onProgress = () => {}) {
   await engine.exec('tar', ['-xf', archive, '-C', tmp]);
   const win = path.join(prefixOf(b), 'drive_c', 'windows');
   const dlls = [...new Set([
-    ...copyDlls(findDir(tmp, 'x64') || '', path.join(win, 'system32')),
-    ...copyDlls(findDir(tmp, 'x32') || '', path.join(win, 'syswow64')),
+    ...copyDlls(findDir(tmp, 'x64') || findDir(tmp, 'x86_64-windows', 6) || '', path.join(win, 'system32')),
+    ...copyDlls(findDir(tmp, 'x32') || findDir(tmp, 'i386-windows', 6) || '', path.join(win, 'syswow64')),
   ])];
   fs.rmSync(tmp, { recursive: true, force: true });
   if (!dlls.length) throw new Error('The DXVK download had no DLLs in it');
