@@ -343,6 +343,7 @@ function launch({ bottleId, file, args = '', appId = null, name, steamAttempt = 
   // A second click while Steam is already open just hands off to it; nothing to watch then.
   const steamOpen = [...running.values()].some((r) => r.runId !== runId && r.bottleId === bottleId && /steam\.exe$/i.test(r.exe || ''));
   if (/^steam\.exe$/i.test(path.basename(file)) && !steamOpen) watchSteam(runId, { bottleId, file, args, appId, name }, steamAttempt);
+  if (/^steam\.exe$/i.test(path.basename(file))) startWindowFix(b);
   emit('running');
   return entry;
 }
@@ -424,6 +425,24 @@ function watchSteam(runId, opts, attempt) {
       .then(() => launch({ ...opts, steamAttempt: attempt + 1 }))
       .catch((e) => log(`Couldn’t restart Steam: ${e.message}`, 'error'));
   }, 5000);
+}
+
+// Under Wine on macOS, Steam opens its sign-in and main windows far off-screen, so it
+// looks like Steam never started. winfix.exe (src/bin/winfix.c) runs alongside it and
+// moves such windows to the middle of the screen; it quits a minute after Steam does.
+const windowFixes = new Map();
+function startWindowFix(b) {
+  if (windowFixes.get(b.id)?.exitCode === null) return;
+  try {
+    const dest = path.join(prefixOf(b), 'drive_c', 'umbra', 'winfix.exe');
+    fs.mkdirSync(path.dirname(dest), { recursive: true });
+    fs.writeFileSync(dest, fs.readFileSync(path.join(__dirname, 'bin', 'winfix.exe')));
+    const child = spawn(requireEngine(), [dest], { env: wineEnv(b), stdio: 'ignore' });
+    child.on('error', () => {});
+    windowFixes.set(b.id, child);
+  } catch (e) {
+    log(`Couldn’t start the Steam window fix: ${e.message}`, 'warn');
+  }
 }
 
 function runningList() {
@@ -731,6 +750,7 @@ async function createMacLauncher(id) {
     `# Launches “${a.name}” from the Umbra bottle “${b.name}”.`,
     ...keep.filter((k) => env[k] !== undefined).map((k) => `export ${k}=${shq(env[k])}`),
     `cd ${shq(path.dirname(a.exe))} || exit 1`,
+    ...(/^steam\.exe$/i.test(path.basename(a.exe)) ? [`${shq(bin)} ${shq(path.join(prefixOf(b), 'drive_c', 'umbra', 'winfix.exe'))} >/dev/null 2>&1 &`] : []),
     `exec ${shq(bin)} ${[...argsFor(a.exe), ...splitArgs(a.args)].map(shq).join(' ')}`,
     '',
   ].join('\n');
