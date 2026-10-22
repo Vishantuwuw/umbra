@@ -46,7 +46,11 @@ const VIEWS = {
   settings: { title: 'Settings', icon: 'sliders', sub: () => 'Performance, setup and the Windows engine.' },
   bottles: { title: 'Bottles', icon: 'bottle', sub: () => 'Advanced: separate Windows environments, each with its own C: drive.', advanced: true },
   console: { title: 'Console', icon: 'console', sub: () => 'Advanced: live output from everything running in Umbra.', advanced: true },
+  admin: { title: 'Admin', icon: 'shield', sub: () => 'Accounts, devices and bans.', advanced: true, hidden: () => S.auth?.role !== 'admin' },
 };
+
+// Always in the sidebar once Windows is set up: [tool id in runtime.tool(), label, icon].
+const QUICK_TOOLS = [['cmd', 'Command Prompt', 'terminal'], ['taskmgr', 'Task Manager', 'chip'], ['explorer', 'File Explorer', 'folder'], ['control', 'Control Panel', 'sliders']];
 
 // ---------- helpers ----------
 function hash(s) { let h = 0; for (const c of s) h = (h * 31 + c.charCodeAt(0)) | 0; return Math.abs(h); }
@@ -117,9 +121,11 @@ function toast(msg, kind = 'ok') {
 // ---------- shell ----------
 function renderNav() {
   const counts = { library: S.apps.filter((a) => a.category !== 'tool').length || '', bottles: S.bottles.length, console: S.running.length || '' };
-  $('#nav').innerHTML = Object.entries(VIEWS).map(([k, v], i) => `
+  $('#nav').innerHTML = Object.entries(VIEWS).filter(([, v]) => !v.hidden?.()).map(([k, v], i) => `
     ${i === 3 ? '<div class="nav-sep"></div><div class="nav-label">Advanced</div>' : ''}
-    <button class="nav-item ${v.advanced ? 'small' : ''} ${view === k ? 'active' : ''}" data-nav="${k}">${icon(v.icon)}${v.title}<span class="count">${counts[k] ?? ''}</span></button>`).join('');
+    <button class="nav-item ${v.advanced ? 'small' : ''} ${view === k ? 'active' : ''}" data-nav="${k}">${icon(v.icon)}${v.title}<span class="count">${counts[k] ?? ''}</span></button>`).join('')
+    + (S.bottles.length && S.engine ? `<div class="nav-sep"></div><div class="nav-label">Windows Tools</div>
+    ${QUICK_TOOLS.map(([tool, label, ic]) => `<button class="nav-item small" data-act="quick-tool" data-tool="${tool}">${icon(ic)}${label}</button>`).join('')}` : '');
 
   const e = S.engine;
   const rosettaMissing = S.cpu.appleSilicon && !S.cpu.rosetta;
@@ -143,6 +149,7 @@ function renderTop() {
     settings: '',
     bottles: `<button class="btn primary" data-act="new-bottle">${icon('plus')}New Bottle</button>`,
     console: `<button class="btn" data-act="clear-logs">${icon('trash')}Clear</button>`,
+    admin: `<label class="search">${icon('search')}<input id="admin-search" placeholder="Search name, email or HWID" value="${esc(adminQuery)}" spellcheck="false"></label><button class="btn" data-act="admin-refresh">${icon('refresh')}Refresh</button>`,
   };
   $('#top-actions').innerHTML = actions[view];
 }
@@ -151,10 +158,11 @@ let topFor = null;
 function render() {
   if (!S) return;
   renderAuth();
+  if (VIEWS[view].hidden?.()) view = 'library';
   renderNav();
   // Keep the header (and the search box being typed in) unless the view changed.
-  if (topFor !== view || document.activeElement?.id !== 'search') { renderTop(); topFor = view; }
-  const fn = { library: viewLibrary, store: viewStore, settings: viewSettings, bottles: viewBottles, console: viewConsole }[view] || viewLibrary;
+  if (topFor !== view || !/^(admin-)?search$/.test(document.activeElement?.id || '')) { renderTop(); topFor = view; }
+  const fn = { library: viewLibrary, store: viewStore, settings: viewSettings, bottles: viewBottles, console: viewConsole, admin: viewAdmin }[view] || viewLibrary;
   const scroll = $('#view').scrollTop;
   $('#view').innerHTML = fn();
   $('#view').scrollTop = scroll;
@@ -165,6 +173,7 @@ function render() {
 function go(v) {
   view = v;
   if (v === 'settings') loadEngines();
+  if (v === 'admin') loadAdmin();
   $('#view').style.animation = 'none';
   void $('#view').offsetWidth;
   $('#view').style.animation = '';
@@ -850,6 +859,10 @@ const actions = {
   'bottle-drive': (el) => call('bottle:drive', el.dataset.id),
   'bottle-scan': (el) => scanModal(el.dataset.id),
   'bottle-tool': (el) => call('bottle:tool', el.dataset.id, el.dataset.tool),
+  'quick-tool': async (el) => {
+    await call('bottle:tool', defaultBottleId(), el.dataset.tool);
+    toast(`Opening ${QUICK_TOOLS.find((t) => t[0] === el.dataset.tool)[1]}…`);
+  },
   'bottle-kill': (el) => call('bottle:kill', el.dataset.id),
   'setup-all': async () => {
     await call('setup:all');

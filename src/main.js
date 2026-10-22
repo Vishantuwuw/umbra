@@ -42,8 +42,22 @@ async function checkForUpdate() {
 app.setName('Umbra');
 if (process.env.UMBRA_HOME) app.setPath('userData', process.env.UMBRA_HOME);
 
+// Sign-in links come back from the browser as umbra://auth/callback?code=…
+if (process.defaultApp) app.setAsDefaultProtocolClient('umbra', process.execPath, [path.resolve(process.argv[1] || '.')]);
+else app.setAsDefaultProtocolClient('umbra');
 if (!app.requestSingleInstanceLock()) app.quit();
-app.on('second-instance', () => focusMain());
+const authUrl = (argv) => argv.find((a) => /^umbra:\/\//i.test(a));
+app.on('open-url', (e, url) => {
+  e.preventDefault();
+  auth.handleUrl(url);
+  focusMain();
+});
+app.on('second-instance', (_e, argv) => {
+  const url = authUrl(argv);
+  if (url) auth.handleUrl(url);
+  focusMain();
+});
+if (authUrl(process.argv)) auth.handleUrl(authUrl(process.argv));
 
 function focusMain() {
   if (!main || main.isDestroyed() || splash) return;
@@ -52,6 +66,16 @@ function focusMain() {
   main.focus();
 }
 
+// Called whenever the account changes; a ban also stops everything that's running.
+let wasBanned = false;
+function onAuthChange(st) {
+  const isBanned = Boolean(st.banned);
+  if (isBanned && !wasBanned) {
+    for (const id of new Set(runtime.runningList().map((r) => r.bottleId))) runtime.kill(id).catch(() => {});
+  }
+  wasBanned = isBanned;
+  pushState();
+}
 
 // Files opened from Finder ("Open With → Umbra" or double-clicking an .exe).
 app.on('open-file', (e, file) => {
@@ -175,7 +199,12 @@ async function boot() {
   splashStep(74, `Loading ${store.get().bottles.length} bottle(s) and ${store.get().apps.length} app(s)`);
   runtime.refreshIcons();
   runtime.migrateSteamArgs();
-  await auth.init(pushState);
+  if (auth.configured()) {
+    splashStep(82, 'Checking your account');
+    await auth.init(onAuthChange).catch((e) => console.warn('Umbra: account init failed:', e.message));
+  } else {
+    await auth.init(onAuthChange);
+  }
   createMain();
   await new Promise((r) => main.once('ready-to-show', r));
   splashStep(90, 'Preparing interface');
@@ -212,13 +241,13 @@ function createMain() {
   main.on('closed', () => { main = null; });
 }
 
-// Until someone signs in, only these calls work: no guests.
+// Until someone signs in (and isn't banned), only these calls work: no guests.
 const OPEN = /^(state|logs|auth:.*|open:external)$/;
 
 function handle(channel, fn) {
   ipcMain.handle(channel, async (_e, ...args) => {
     try {
-      if (auth.locked() && !OPEN.test(channel)) throw new Error('Sign in to use Umbra');
+      if (auth.locked() && !OPEN.test(channel)) throw new Error(auth.state().banned ? 'This device is banned from Umbra' : 'Sign in to use Umbra');
       const value = await fn(...args);
       return { ok: true, value };
     } catch (err) {
@@ -413,7 +442,14 @@ handle('steam:repair', async () => {
   task('steam-repair', 'Repairing Steam', (p) => runtime.repairSteam(p)).catch((e) => runtimeLog(`Repair Steam failed: ${e.message}`, 'error'));
   return true;
 });
-handle('app:run', (id) => runtime.runApp(id));
+handle('app:run', async (id) => {
+  // Steam installed before Umbra added its runtimes shows a Visual C++ error; fix that first.
+  const a = store.get().apps.find((x) => x.id === id);
+  if (a && /(^|[\\/])steam\.exe$/i.test(a.exe) && runtime.steamNeedsRuntimes(a.bottleId)) {
+    await task('steam-runtimes', 'Installing Visual C++ for Steam', (p) => runtime.ensureSteamRuntimes(a.bottleId, p));
+  }
+  return runtime.runApp(id);
+});
 handle('app:reveal', (id) => {
   const a = store.get().apps.find((x) => x.id === id);
   if (a) shell.showItemInFolder(a.exe);
@@ -450,10 +486,19 @@ handle('open:external', (url) => {
 
 handle('auth:email-in', (email, password) => auth.signInEmail(email, password));
 handle('auth:email-up', (email, password, name) => auth.signUpEmail(email, password, name));
+handle('auth:provider', (provider) => auth.signInProvider(provider));
+handle('auth:cancel', () => auth.cancelPending());
+handle('auth:reset', (email) => auth.resetPassword(email));
+handle('auth:set-password', (password) => auth.setPassword(password));
+handle('auth:retry', () => auth.retry());
 handle('auth:sign-out', async () => {
   for (const id of new Set(runtime.runningList().map((r) => r.bottleId))) await runtime.kill(id).catch(() => {});
   await auth.signOut();
 });
+handle('admin:list', () => auth.adminList());
+handle('admin:hwid', (hwid, banned, reason) => auth.adminHwidBan(hwid, banned, reason));
+handle('admin:user', (id, banned, reason, devices) => auth.adminUserBan(id, banned, reason, devices));
+handle('admin:role', (id, role) => auth.adminRole(id, role));
 
 app.whenReady().then(() => {
   if (process.platform === 'darwin') {

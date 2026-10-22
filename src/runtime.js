@@ -1003,6 +1003,18 @@ function installSteam(onProgress) {
   return steamInstall;
 }
 
+// Steam won't start without the Visual C++ runtimes ("Steam needs Microsoft Visual C++…"),
+// and its sign-in and store pages use Wine's web engine (Gecko).
+const STEAM_NEEDS = ['vcrun', 'wineaddons'];
+const steamNeedsRuntimes = (bottleId) => STEAM_NEEDS.some((c) => !bottle(bottleId).components?.[c]);
+
+async function ensureSteamRuntimes(bottleId, onProgress = () => {}) {
+  const missing = STEAM_NEEDS.filter((c) => !bottle(bottleId).components?.[c]);
+  for (const [i, c] of missing.entries()) {
+    await installComponent(bottleId, c, (f, l) => onProgress((i + (f ?? 0)) / missing.length, l));
+  }
+}
+
 async function doInstallSteam(onProgress) {
   requireEngine();
   const s = store.get();
@@ -1010,9 +1022,10 @@ async function doInstallSteam(onProgress) {
   if (!b) b = await createBottle({ name: 'Default', winver: 'win10' }, (f, label) => onProgress(f * 0.35, label));
   b.steam = true;
   store.save();
+  await ensureSteamRuntimes(b.id, (f, label) => onProgress(0.35 + f * 0.15, label || 'Installing Visual C++ for Steam…'));
   const setup = path.join(engine.cacheDir(), 'SteamSetup.exe');
   if (!fs.existsSync(setup)) {
-    await engine.download(STEAM_SETUP_URL, setup, (f) => onProgress(0.35 + (f ?? 0) * 0.25, 'Downloading Steam installer…'));
+    await engine.download(STEAM_SETUP_URL, setup, (f) => onProgress(0.5 + (f ?? 0) * 0.1, 'Downloading Steam installer…'));
   }
   onProgress(0.62, 'Installing Steam for Windows…');
   await wineRun(b, [setup, '/S'], { tag: 'SteamSetup' });
@@ -1032,6 +1045,6 @@ async function doInstallSteam(onProgress) {
 module.exports = {
   steamProgress,
   init, setEngine, getEngine, createBottle, deleteBottle, setWinver, setRetina, launch, runningList, runningIn, creditPlaytime, stop, kill,
-  uninstallTarget, splitArgs, prefetchSteamClient,
+  uninstallTarget, splitArgs, prefetchSteamClient, steamNeedsRuntimes, ensureSteamRuntimes,
   tool, driveC, scan, isInstaller, readdSteam, migrateSteamArgs, repairSteam, uninstallInfo, uninstallApp, mainBottle, addWindowsTools, storeStatus, installFromStore, fixCommonProblems, createMacLauncher, installComponent, runWinetricks, setDxvk, addApp, refreshIcons, importSteamGames, updateApp, removeApp, runApp, steamStatus, installSteam, prefixOf, bottle,
 };
