@@ -25,6 +25,9 @@ Then drop any `.exe` onto the window, or go to **Steam → Install Steam for Win
 **Run an installer and the app is added to your Library automatically**
 ![Installed app added](https://raw.githubusercontent.com/{{REPO}}/{{SHA}}/docs/screenshots/installer-added.png)
 
+**Components: one-click Visual C++, .NET, DirectX and DXVK**
+![Components](https://raw.githubusercontent.com/{{REPO}}/{{SHA}}/docs/screenshots/components.png)
+
 **Bottles: separate Windows environments**
 ![Bottles](https://raw.githubusercontent.com/{{REPO}}/{{SHA}}/docs/screenshots/bottles.png)
 

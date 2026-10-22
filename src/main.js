@@ -3,6 +3,7 @@ const path = require('path');
 const store = require('./store');
 const engine = require('./engine');
 const runtime = require('./runtime');
+const components = require('./components');
 
 const RENDERER = path.join(__dirname, 'renderer');
 const MIN_SPLASH_MS = 2600;
@@ -231,6 +232,14 @@ handle('bottle:delete', async (id) => {
 });
 handle('bottle:winver', (id, v) => runtime.setWinver(id, v));
 handle('bottle:retina', (id, on) => runtime.setRetina(id, on));
+handle('components:list', () => components.LIST);
+handle('bottle:component', (id, comp) => {
+  const b = runtime.bottle(id);
+  const c = components.LIST.find((x) => x.id === comp);
+  return task(`comp:${id}:${comp}`, `${c?.name || comp} → ${b.name}`, (p) => runtime.installComponent(id, comp, p));
+});
+handle('bottle:winetricks', (id, verb) => task(`wt:${id}`, `winetricks ${verb}`, (p) => runtime.runWinetricks(id, verb, p)));
+handle('bottle:dxvk', (id, on) => task(`dxvk:${id}`, `${on ? 'Enabling' : 'Disabling'} DXVK`, (p) => runtime.setDxvk(id, on, p)));
 handle('bottle:tool', (id, name) => runtime.tool(id, name));
 handle('bottle:drive', (id) => shell.openPath(runtime.driveC(id)));
 handle('bottle:kill', (id) => runtime.kill(id));

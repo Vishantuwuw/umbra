@@ -8,6 +8,7 @@ const store = require('./store');
 const engine = require('./engine');
 const icons = require('./icons');
 const steamlib = require('./steamlib');
+const components = require('./components');
 
 const STEAM_SETUP_URL = 'https://cdn.akamai.steamstatic.com/client/installer/SteamSetup.exe';
 const STEAM_ARGS = '-cef-disable-gpu -cef-disable-sandbox';
@@ -154,6 +155,79 @@ async function setRetina(id, on) {
   await wineRun(b, ['reg', 'add', 'HKCU\\Software\\Wine\\Mac Driver', '/v', 'RetinaMode', '/t', 'REG_SZ', '/d', on ? 'y' : 'n', '/f']);
   b.retina = on;
   store.save();
+}
+
+function rt() {
+  return { wine: requireEngine(), env: wineEnv, prefix: prefixOf, waitServer, log };
+}
+
+function installComponent(bottleId, id, onProgress) {
+  return components.install(rt(), bottle(bottleId), id, onProgress);
+}
+
+function runWinetricks(bottleId, verb, onProgress) {
+  return components.winetricks(rt(), bottle(bottleId), verb, onProgress);
+}
+
+const DXVK_API = 'https://api.github.com/repos/Gcenx/DXVK-macOS/releases?per_page=10';
+
+function copyDlls(from, to) {
+  const names = [];
+  if (!fs.existsSync(from)) return names;
+  fs.mkdirSync(to, { recursive: true });
+  for (const f of fs.readdirSync(from)) {
+    if (!/\.dll$/i.test(f)) continue;
+    fs.copyFileSync(path.join(from, f), path.join(to, f));
+    names.push(f.replace(/\.dll$/i, '').toLowerCase());
+  }
+  return names;
+}
+
+function findDir(root, name, depth = 4) {
+  if (depth < 0) return null;
+  let entries = [];
+  try { entries = fs.readdirSync(root, { withFileTypes: true }); } catch { return null; }
+  for (const e of entries) if (e.isDirectory() && e.name === name) return path.join(root, e.name);
+  for (const e of entries) if (e.isDirectory()) { const hit = findDir(path.join(root, e.name), name, depth - 1); if (hit) return hit; }
+  return null;
+}
+
+// DXVK-macOS translates DirectX 10/11 to Vulkan, which MoltenVK runs on Metal.
+async function setDxvk(bottleId, on, onProgress = () => {}) {
+  const b = bottle(bottleId);
+  const key = 'HKCU\\Software\\Wine\\DllOverrides';
+  if (!on) {
+    for (const dll of b.dxvk || []) await wineRun(b, ['reg', 'delete', key, '/v', dll, '/f']);
+    b.dxvk = null;
+    store.save();
+    return;
+  }
+  onProgress(0.05, 'Finding the latest DXVK-macOS…');
+  const headers = { 'User-Agent': 'Umbra', Accept: 'application/vnd.github+json' };
+  if (process.env.GITHUB_TOKEN) headers.Authorization = `Bearer ${process.env.GITHUB_TOKEN}`;
+  const res = await fetch(DXVK_API, { headers });
+  if (!res.ok) throw new Error(`Could not reach DXVK-macOS releases (HTTP ${res.status})`);
+  const asset = (await res.json()).flatMap((r) => r.assets || []).find((a) => /\.tar\.(gz|xz)$/.test(a.name));
+  if (!asset) throw new Error('No DXVK-macOS build found');
+  const archive = path.join(engine.cacheDir(), asset.name);
+  if (!fs.existsSync(archive)) await engine.download(asset.browser_download_url, archive, (f) => onProgress(0.1 + (f ?? 0) * 0.5, `Downloading ${asset.name}…`));
+  onProgress(0.65, 'Installing DXVK into the bottle…');
+  const tmp = path.join(engine.cacheDir(), 'dxvk-unpack');
+  fs.rmSync(tmp, { recursive: true, force: true });
+  fs.mkdirSync(tmp, { recursive: true });
+  await engine.exec('tar', ['-xf', archive, '-C', tmp]);
+  const win = path.join(prefixOf(b), 'drive_c', 'windows');
+  const dlls = [...new Set([
+    ...copyDlls(findDir(tmp, 'x64') || '', path.join(win, 'system32')),
+    ...copyDlls(findDir(tmp, 'x32') || '', path.join(win, 'syswow64')),
+  ])];
+  fs.rmSync(tmp, { recursive: true, force: true });
+  if (!dlls.length) throw new Error('The DXVK download had no DLLs in it');
+  for (const dll of dlls) await wineRun(b, ['reg', 'add', key, '/v', dll, '/t', 'REG_SZ', '/d', 'native', '/f']);
+  b.dxvk = dlls;
+  store.save();
+  log(`DXVK enabled in “${b.name}” (${dlls.join(', ')})`);
+  onProgress(1, 'DXVK enabled');
 }
 
 function argsFor(file) {
@@ -434,5 +508,5 @@ async function installSteam(onProgress) {
 
 module.exports = {
   init, setEngine, getEngine, createBottle, deleteBottle, setWinver, setRetina, launch, runningList, stop, kill,
-  tool, driveC, scan, isInstaller, addApp, refreshIcons, importSteamGames, updateApp, removeApp, runApp, steamStatus, installSteam, prefixOf, bottle,
+  tool, driveC, scan, isInstaller, installComponent, runWinetricks, setDxvk, addApp, refreshIcons, importSteamGames, updateApp, removeApp, runApp, steamStatus, installSteam, prefixOf, bottle,
 };

@@ -53,6 +53,15 @@ app.whenReady().then(async () => {
   const alive = runtime.runningList().some((r) => r.runId === run.runId);
   try { execFileSync('/usr/sbin/screencapture', ['-x', path.join(shots, 'mac-exe-running.png')]); } catch (e) { console.log('screencapture failed:', e.message); }
   await runtime.kill(b.id);
+
+  // Components and DXVK: reported, not fatal, since they depend on third-party downloads.
+  for (const [label, fn] of [
+    ['Visual C++ component', () => runtime.installComponent(b.id, 'vcrun', (f, l) => console.log(pct(f), l))],
+    ['DXVK', () => runtime.setDxvk(b.id, true, (f, l) => console.log(pct(f), l))],
+  ]) {
+    try { await fn(); console.log(`PASS: ${label}`); } catch (e) { console.log(`WARN: ${label} failed: ${e.message}`); }
+  }
+
   store.flush();
   console.log(alive ? `PASS: installed Hello App is running under Wine on ${process.platform}` : 'FAIL: Hello App exited early');
   app.exit(alive ? 0 : 1);

@@ -242,6 +242,7 @@ function viewBottles() {
         <button class="btn sm primary" data-act="bottle-run" data-id="${b.id}">${icon('play')}Run .exe</button>
         <button class="btn sm" data-act="bottle-drive" data-id="${b.id}">${icon('folder')}C: Drive</button>
         <button class="btn sm" data-act="bottle-scan" data-id="${b.id}">${icon('search')}Find Apps</button>
+        <button class="btn sm" data-act="bottle-components" data-id="${b.id}">${icon('chip')}Components${b.components && Object.keys(b.components).length ? ` · ${Object.keys(b.components).length}` : ''}</button>
         <button class="btn sm" data-act="bottle-tool" data-tool="winecfg" data-id="${b.id}">${icon('sliders')}Config</button>
         ${live ? `<button class="btn sm danger" data-act="bottle-kill" data-id="${b.id}">${icon('stop')}Stop All</button>` : ''}
       </div>
@@ -476,6 +477,44 @@ function pickAppsModal(bottleId, found, title, sub) {
   });
 }
 
+let COMPONENTS = null;
+async function componentsModal(bottleId) {
+  COMPONENTS ||= await call('components:list');
+  const b = S.bottles.find((x) => x.id === bottleId);
+  const have = b.components || {};
+  modal(`<h3>Components · ${esc(b.name)}</h3><p>Windows runtimes that apps and games often need. If something won’t start, install these first.</p>
+    <div class="comp-list">
+      ${COMPONENTS.map((c) => `<div class="comp"><div class="t"><b>${esc(c.name)}</b><span>${esc(c.desc)}</span></div>
+        ${have[c.id] ? `<span class="comp-ok">${icon('check')}Installed</span><button class="btn sm ghost" data-comp="${c.id}">Reinstall</button>`
+          : `<button class="btn sm primary" data-comp="${c.id}">${icon('download')}Install</button>`}</div>`).join('')}
+      <div class="comp"><div class="t"><b>DXVK <span class="tag-exp">Experimental</span></b><span>Faster DirectX 10/11 games: translates to Vulkan, then Metal via MoltenVK.</span></div>
+        <button class="switch ${b.dxvk ? 'on' : ''}" id="m-dxvk"></button></div>
+    </div>
+    <div class="field" style="margin-top:14px"><label>Winetricks (advanced)</label>
+      <div style="display:flex;gap:8px"><input class="input" id="m-wt" placeholder="e.g. corefonts d3dcompiler_47" style="flex:1"><button class="btn" id="m-wt-go">Run</button></div></div>
+    <div class="modal-actions"><button class="btn ghost" data-close>Done</button></div>`,
+  (el, close) => {
+    el.querySelectorAll('[data-comp]').forEach((btn) => btn.onclick = async () => {
+      const c = COMPONENTS.find((x) => x.id === btn.dataset.comp);
+      close();
+      await call('bottle:component', bottleId, c.id);
+      toast(`${c.name} installed in “${b.name}”`);
+    });
+    $('#m-dxvk', el).onclick = async () => {
+      close();
+      await call('bottle:dxvk', bottleId, !b.dxvk);
+      toast(`DXVK ${b.dxvk ? 'disabled' : 'enabled'} in “${b.name}”`);
+    };
+    $('#m-wt-go', el).onclick = async () => {
+      const verb = $('#m-wt', el).value.trim();
+      if (!verb) return;
+      close();
+      await call('bottle:winetricks', bottleId, verb);
+      toast(`winetricks ${verb} finished`);
+    };
+  });
+}
+
 function menu(anchor, items) {
   document.querySelector('.menu')?.remove();
   const m = document.createElement('div');
@@ -526,6 +565,7 @@ const actions = {
     const id = el.dataset.id;
     const b = S.bottles.find((x) => x.id === id);
     menu(el, [
+      { icon: 'chip', label: 'Components…', run: () => componentsModal(id) },
       { icon: 'sliders', label: 'Wine Configuration', run: () => call('bottle:tool', id, 'winecfg') },
       { icon: 'window', label: 'Registry Editor', run: () => call('bottle:tool', id, 'regedit') },
       { icon: 'chip', label: 'Task Manager', run: () => call('bottle:tool', id, 'taskmgr') },
@@ -540,6 +580,7 @@ const actions = {
     ]);
   },
   'bottle-run': (el) => pickAndRun(el.dataset.id),
+  'bottle-components': (el) => componentsModal(el.dataset.id),
   'bottle-drive': (el) => call('bottle:drive', el.dataset.id),
   'bottle-scan': (el) => scanModal(el.dataset.id),
   'bottle-tool': (el) => call('bottle:tool', el.dataset.id, el.dataset.tool),
@@ -648,7 +689,7 @@ api.on('installed', ({ bottleId, installer, added, candidates }) => {
   }
 });
 api.on('crashed', ({ name, code }) => {
-  toast(`${name} closed right away (code ${code}). It may need Visual C++ or .NET — see Bottles → Components, and the Console for details.`, 'error');
+  toast(`${name} closed right away (code ${code}). It may need Visual C++ or .NET: open Bottles → Components. The Console has details.`, 'error');
 });
 api.on('open-files', (files) => { const f = files.find((p) => RUNNABLE.test(p)); if (f) runFileFlow(f); });
 

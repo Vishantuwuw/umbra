@@ -257,3 +257,13 @@ select.input { appearance: none; background-image: linear-gradient(45deg, transp
 .search:focus-within { border-color: var(--violet); box-shadow: 0 0 0 3px rgba(139,92,246,.2); color: var(--text); }
 .search input { width: 170px; background: none; border: 0; outline: none; font-size: 13px; }
 .section-h .faint { font-size: 12px; }
+
+/* Components */
+.modal:has(.comp-list) { width: 560px; }
+.comp-list { display: flex; flex-direction: column; gap: 8px; }
+.comp { display: flex; align-items: center; gap: 12px; padding: 12px 14px; border-radius: 12px; background: #000; border: 1px solid var(--line); }
+.comp .t { flex: 1; min-width: 0; }
+.comp b { display: flex; align-items: center; gap: 8px; font-weight: 600; }
+.comp span { color: var(--faint); font-size: 12px; }
+.comp .comp-ok { display: flex; align-items: center; gap: 5px; color: var(--green); font-size: 12px; font-weight: 600; }
+.tag-exp { font-size: 10px !important; font-weight: 600; letter-spacing: .06em; text-transform: uppercase; color: var(--amber) !important; border: 1px solid rgba(251,191,36,.35); border-radius: 6px; padding: 1px 6px; }

@@ -4,6 +4,10 @@
 
 - **Drop any `.exe`** (or `.msi` / `.bat`) onto the window to run it. You can also double-click one in Finder (Open With → Umbra).
 - **Installers just work**: run any `setup.exe` or `.msi` and the program installs into that bottle. When it finishes, Umbra adds the installed app to your Library automatically, named after its Start Menu shortcut.
+- **Components**: one-click Visual C++ 2015–2022, .NET Desktop Runtime 8, DirectX 9 extras and Wine Mono/Gecko per bottle, plus winetricks for anything else. This is the fix for most "app won't start" problems.
+- **DXVK (experimental)**: per-bottle DirectX 10/11 → Vulkan → Metal translation for faster games.
+- **Real artwork**: icons pulled from each `.exe`, and official Steam cover art for Steam games.
+- **Steam library import**: installed Steam games are added with their real names and covers, automatically whenever Steam closes.
 - **Bottles**: isolated Windows 10/11/7/XP environments, each with its own C: drive and registry.
 - **One-click Steam**: downloads Valve's official Windows Steam installer into a dedicated bottle.
 - **Library**: saves your games and apps for one-click launching and tracks playtime.
@@ -17,6 +21,7 @@
 | ![Library](docs/screenshots/library-running.png) | ![Bottles](docs/screenshots/bottles.png) |
 | ![Run dialog](docs/screenshots/run-dialog.png) | ![Steam](docs/screenshots/steam.png) |
 | ![Installer detected](docs/screenshots/installer-dialog.png) | ![Installed app added](docs/screenshots/installer-added.png) |
+| ![Components](docs/screenshots/components.png) | ![Library with icons](docs/screenshots/library-icons.png) |
 | ![Engine](docs/screenshots/engine.png) | ![Console](docs/screenshots/console.png) |
 
 ## Install
@@ -53,7 +58,10 @@ Each push to `main` runs a GitHub Actions job on a real Mac. That job installs t
 |---|---|
 | `src/main.js` | Electron main process: loading screen, windows, IPC |
 | `src/engine.js` | Finds or installs Wine, checks Rosetta |
-| `src/runtime.js` | Bottles (Wine prefixes), launching programs, Steam setup, app scanning |
+| `src/runtime.js` | Bottles (Wine prefixes), launching programs, installer tracking, Steam setup, DXVK |
+| `src/components.js` | Visual C++ / .NET / DirectX installers and winetricks |
+| `src/steamlib.js` | Reads Steam app manifests to import games |
+| `src/icons.js` | Extracts icons from Windows executables |
 | `src/renderer/` | The UI (`index.html`, `app.js`, `styles.css`) and loading screen (`splash.html`) |
 
 Umbra data lives in `~/Library/Application Support/Umbra` (bottles, engine, library).
