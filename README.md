@@ -4,6 +4,7 @@
 
 - **One-click setup**: a single "Set up everything" button installs Rosetta, the Wine engine, a Windows 10 bottle and Visual C++.
 - **DirectX 12 via D3DMetal**: Umbra finds the Wine engines from Whisky or Apple's Game Porting Toolkit, and you can switch to one on the Engine page to run DirectX 12 games.
+- **Bottle backups**: save a whole Windows setup (games, saves, settings) as one `.tar.gz` from the bottle's menu.
 - **Favorites**: star games to pin them to the top of your Library.
 - **Drop any `.exe`** (or `.msi` / `.bat`) onto the window to run it. You can also double-click one in Finder (Open With → Umbra).
 - **Installers just work**: run any `setup.exe` or `.msi` and the program installs into that bottle. When it finishes, Umbra adds the installed app to your Library automatically, named after its Start Menu shortcut.

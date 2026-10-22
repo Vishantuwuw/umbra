@@ -288,6 +288,26 @@ handle('bottle:delete', async (id) => {
   });
   if (r.response === 0) await runtime.deleteBottle(id);
 });
+handle('bottle:backup', async (id) => {
+  const b = runtime.bottle(id);
+  const stamp = new Date().toISOString().slice(0, 10);
+  const r = await dialog.showSaveDialog(main, {
+    title: `Back up “${b.name}”`,
+    defaultPath: require('path').join(app.getPath('downloads'), `Umbra ${b.name} ${stamp}.tar.gz`),
+    filters: [{ name: 'Bottle backup', extensions: ['gz'] }],
+  });
+  if (r.canceled) return null;
+  return task(`backup:${id}`, `Backing up “${b.name}”`, async (p) => {
+    p(0.1, 'Stopping programs in the bottle…');
+    await runtime.kill(id).catch(() => {});
+    p(0.3, 'Compressing — large bottles can take a few minutes…');
+    const prefix = runtime.prefixOf(b);
+    await engine.exec('tar', ['-czf', r.filePath, '-C', require('path').dirname(prefix), require('path').basename(prefix)], { timeout: 60 * 60 * 1000 });
+    p(1, 'Backup saved');
+    shell.showItemInFolder(r.filePath);
+    return r.filePath;
+  });
+});
 handle('bottle:winver', (id, v) => runtime.setWinver(id, v));
 handle('bottle:retina', (id, on) => runtime.setRetina(id, on));
 handle('components:list', () => components.LIST);

@@ -632,6 +632,7 @@ const actions = {
       ...WINVERS.filter(([v]) => v !== b.winver).slice(0, 3).map(([v, n]) => ({ icon: 'refresh', label: `Switch to ${n}`, run: async () => { await call('bottle:winver', id, v); toast(`Now ${n}`); } })),
       { icon: 'window', label: `${b.retina ? 'Disable' : 'Enable'} Retina mode`, run: () => call('bottle:retina', id, !b.retina) },
       { icon: 'stop', label: 'Force-quit everything', run: () => call('bottle:kill', id) },
+      { icon: 'download', label: 'Back Up Bottle…', run: async () => { const f = await call('bottle:backup', id); if (f) toast(`Backup saved: ${basename(f)}`); } },
       '-',
       { icon: 'trash', label: 'Delete Bottle…', danger: true, run: () => call('bottle:delete', id) },
     ]);
