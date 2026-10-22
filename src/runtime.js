@@ -325,7 +325,8 @@ function launch({ bottleId, file, args = '', appId = null, name, steamAttempt = 
 
 // Steam's updater sometimes hangs under Wine: on a download that never comes back, or
 // on "Cleaning up…" after it says it is relaunching Steam. Watch its log until the real
-// client starts, and restart Steam (at most twice) when it gets stuck.
+// client starts, and restart Steam (at most three times) when it gets stuck. Steam's
+// updater also sometimes exits after "launching Steam…" without the new client starting.
 const STEAM_STALL_MS = 4 * 60 * 1000;
 const STEAM_RELAUNCH_MS = 45 * 1000;
 
@@ -349,16 +350,19 @@ function watchSteam(runId, opts, attempt) {
   let lastGrowth = t0;
   let handedOffAt = 0;
   const timer = setInterval(() => {
-    if (!running.has(runId) || Date.now() - t0 > 30 * 60 * 1000) return clearInterval(timer);
+    if (Date.now() - t0 > 30 * 60 * 1000) return clearInterval(timer);
     const p = steamProgress(logs, from, t0);
     if (p.clientUp) return clearInterval(timer);
+    const alive = running.has(runId);
+    // The updater exiting is normal only when it handed off to the real client.
+    if (!alive && !p.handedOff) return clearInterval(timer);
     if (p.size !== lastSize) { lastSize = p.size; lastGrowth = Date.now(); }
     handedOffAt = p.handedOff ? handedOffAt || Date.now() : 0;
     const reopenStuck = handedOffAt && Date.now() - handedOffAt > STEAM_RELAUNCH_MS;
-    const stalled = Date.now() - lastGrowth > STEAM_STALL_MS;
+    const stalled = alive && Date.now() - lastGrowth > STEAM_STALL_MS;
     if (!reopenStuck && !stalled) return;
     clearInterval(timer);
-    if (attempt >= 2) {
+    if (attempt >= 3) {
       log('Steam still looks stuck. Try Repair Steam from its settings, or quit and reopen it.', 'warn');
       return;
     }
