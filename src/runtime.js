@@ -277,7 +277,7 @@ function splitArgs(s) {
 }
 
 // Launches a Windows program without waiting for it; tracks it as running.
-function launch({ bottleId, file, args = '', appId = null, name }) {
+function launch({ bottleId, file, args = '', appId = null, name, steamAttempt = 0 }) {
   const bin = requireEngine();
   const b = bottle(bottleId);
   if (!fs.existsSync(file)) throw new Error(`File not found: ${file}`);
@@ -318,8 +318,56 @@ function launch({ bottleId, file, args = '', appId = null, name }) {
   };
   child.on('exit', done);
   child.on('error', (e) => { log(`${label}: ${e.message}`, 'error'); done(-1); });
+  if (/^steam\.exe$/i.test(path.basename(file))) watchSteam(runId, { bottleId, file, args, appId, name }, steamAttempt);
   emit('running');
   return entry;
+}
+
+// Steam's updater sometimes hangs under Wine: on a download that never comes back, or
+// on "Cleaning up…" after it says it is relaunching Steam. Watch its log until the real
+// client starts, and restart Steam (at most twice) when it gets stuck.
+const STEAM_STALL_MS = 4 * 60 * 1000;
+const STEAM_RELAUNCH_MS = 45 * 1000;
+
+function steamProgress(logs, from, since) {
+  let text = '';
+  try { text = fs.readFileSync(path.join(logs, 'bootstrap_log.txt')).subarray(from).toString('utf8'); } catch {}
+  const mtime = (f) => { try { return fs.statSync(path.join(logs, f)).mtimeMs; } catch { return 0; } };
+  const clientUp = ['connection_log.txt', 'webhelper.txt', 'cef_log.txt'].some((f) => mtime(f) > since);
+  const handoff = text.lastIndexOf('Update complete, launching Steam');
+  // After a handoff the relaunched updater logs a fresh "Startup" line.
+  const handedOff = handoff >= 0 && !/Startup/.test(text.slice(handoff));
+  return { size: from + Buffer.byteLength(text), clientUp, handedOff };
+}
+
+function watchSteam(runId, opts, attempt) {
+  const logs = path.join(path.dirname(opts.file), 'logs');
+  let from = 0;
+  try { from = fs.statSync(path.join(logs, 'bootstrap_log.txt')).size; } catch {}
+  const t0 = Date.now();
+  let lastSize = from;
+  let lastGrowth = t0;
+  let handedOffAt = 0;
+  const timer = setInterval(() => {
+    if (!running.has(runId) || Date.now() - t0 > 30 * 60 * 1000) return clearInterval(timer);
+    const p = steamProgress(logs, from, t0);
+    if (p.clientUp) return clearInterval(timer);
+    if (p.size !== lastSize) { lastSize = p.size; lastGrowth = Date.now(); }
+    handedOffAt = p.handedOff ? handedOffAt || Date.now() : 0;
+    const reopenStuck = handedOffAt && Date.now() - handedOffAt > STEAM_RELAUNCH_MS;
+    const stalled = Date.now() - lastGrowth > STEAM_STALL_MS;
+    if (!reopenStuck && !stalled) return;
+    clearInterval(timer);
+    if (attempt >= 2) {
+      log('Steam still looks stuck. Try Repair Steam from its settings, or quit and reopen it.', 'warn');
+      return;
+    }
+    log(reopenStuck ? 'Steam finished updating but didn’t reopen. Restarting it…' : 'Steam’s update stopped making progress. Restarting it…', 'warn');
+    kill(opts.bottleId)
+      .then(() => new Promise((r) => setTimeout(r, 2000)))
+      .then(() => launch({ ...opts, steamAttempt: attempt + 1 }))
+      .catch((e) => log(`Couldn’t restart Steam: ${e.message}`, 'error'));
+  }, 5000);
 }
 
 function runningList() {
@@ -982,6 +1030,7 @@ async function doInstallSteam(onProgress) {
 }
 
 module.exports = {
+  steamProgress,
   init, setEngine, getEngine, createBottle, deleteBottle, setWinver, setRetina, launch, runningList, runningIn, creditPlaytime, stop, kill,
   uninstallTarget, splitArgs, prefetchSteamClient,
   tool, driveC, scan, isInstaller, readdSteam, migrateSteamArgs, repairSteam, uninstallInfo, uninstallApp, mainBottle, addWindowsTools, storeStatus, installFromStore, fixCommonProblems, createMacLauncher, installComponent, runWinetricks, setDxvk, addApp, refreshIcons, importSteamGames, updateApp, removeApp, runApp, steamStatus, installSteam, prefixOf, bottle,
