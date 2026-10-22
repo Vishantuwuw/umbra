@@ -279,8 +279,8 @@ handle('engine:install', () => task('engine', 'Installing Wine engine', async (p
 handle('engine:choose', async () => {
   const r = await dialog.showOpenDialog(main, { title: 'Choose a wine or wine64 binary', properties: ['openFile', 'treatPackageAsDirectory'] });
   if (r.canceled) return null;
-  const eng = await engine.detect(r.filePaths[0]);
-  if (!eng) throw new Error('That file is not a runnable Wine binary');
+  const eng = await engine.detect(r.filePaths[0], { strict: true });
+  if (!eng) throw new Error('That file isn’t a Wine program Umbra can run');
   store.get().settings.enginePath = eng.path;
   store.save();
   runtime.setEngine(eng);
@@ -345,7 +345,7 @@ handle('app:fix', (id) => {
 });
 handle('engine:list', () => engine.detectAll());
 handle('engine:use', async (p) => {
-  const eng = await engine.detect(p);
+  const eng = await engine.detect(p, { strict: true });
   if (!eng) throw new Error('That engine is no longer available');
   store.get().settings.enginePath = p;
   store.save();
@@ -416,18 +416,32 @@ handle('app:add', (opts) => runtime.addApp(opts));
 handle('app:update', (id, patch) => runtime.updateApp(id, patch));
 handle('app:remove', (id) => runtime.removeApp(id));
 handle('app:uninstall', async (id) => {
-  const { app: a, dir, alsoRemoves } = runtime.uninstallInfo(id);
+  const { app: a, dir, alsoRemoves, otherPrograms = [] } = runtime.uninstallInfo(id);
   if (!dir) throw new Error(`${a.name} can’t be uninstalled automatically. You can still remove it from your Library.`);
   const r = await dialog.showMessageBox(main, {
     type: 'warning', buttons: ['Uninstall', 'Cancel'], defaultId: 1, cancelId: 1,
     message: `Uninstall ${a.name}?`,
-    detail: `This deletes ${a.name} from your Mac${alsoRemoves.length ? `, along with ${alsoRemoves.join(', ')}` : ''}. Saved games stored inside its folder are deleted too.`,
+    detail: `This deletes ${a.name} from your Mac${alsoRemoves.length ? `, along with ${alsoRemoves.join(', ')}` : ''}. Saved games stored inside its folder are deleted too.`
+      + (otherPrograms.length ? `\n\nIts folder also contains ${otherPrograms.join(', ')}. They will be deleted too.` : ''),
   });
   if (r.response !== 0) return null;
   return runtime.uninstallApp(id);
 });
 handle('steam:readd', () => runtime.readdSteam());
-handle('steam:repair', () => runtime.repairSteam());
+handle('steam:repair', async () => {
+  const st = runtime.steamStatus();
+  const open = st.bottleId ? runtime.runningIn(st.bottleId).filter((r) => !/steam/i.test(r.name || '')) : [];
+  if (open.length) {
+    const r = await dialog.showMessageBox(main, {
+      type: 'warning', buttons: ['Repair Steam', 'Cancel'], defaultId: 1, cancelId: 1,
+      message: 'Repair Steam?',
+      detail: `This closes everything running alongside Steam: ${open.map((x) => x.name).join(', ')}. Unsaved progress will be lost.`,
+    });
+    if (r.response !== 0) return false;
+  }
+  task('steam-repair', 'Repairing Steam', (p) => runtime.repairSteam(p)).catch((e) => runtimeLog(`Repair Steam failed: ${e.message}`, 'error'));
+  return true;
+});
 handle('app:run', (id) => runtime.runApp(id));
 handle('app:reveal', (id) => {
   const a = store.get().apps.find((x) => x.id === id);
@@ -525,4 +539,7 @@ app.on('window-all-closed', () => {
   if (process.platform !== 'darwin') app.quit();
 });
 
-app.on('before-quit', () => store.flush());
+app.on('before-quit', () => {
+  runtime.creditPlaytime();
+  store.flush();
+});

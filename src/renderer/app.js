@@ -758,7 +758,7 @@ async function uninstall(a) {
 }
 
 async function repairSteam() {
-  await call('steam:repair');
+  if (!(await call('steam:repair'))) return;
   toast('Repairing Steam… it will re-download its update and open. This can take a few minutes.');
 }
 
