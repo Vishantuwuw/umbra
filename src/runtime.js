@@ -6,6 +6,8 @@ const { spawn } = require('child_process');
 const { app } = require('electron');
 const store = require('./store');
 const engine = require('./engine');
+const icons = require('./icons');
+const steamlib = require('./steamlib');
 
 const STEAM_SETUP_URL = 'https://cdn.akamai.steamstatic.com/client/installer/SteamSetup.exe';
 const STEAM_ARGS = '-cef-disable-gpu -cef-disable-sandbox';
@@ -188,6 +190,7 @@ function launch({ bottleId, file, args = '', appId = null, name }) {
   store.save();
   const done = (code) => {
     if (!running.has(runId)) return;
+    const { stopped } = running.get(runId);
     running.delete(runId);
     const secs = Math.round((Date.now() - entry.started) / 1000);
     if (appId) {
@@ -197,7 +200,12 @@ function launch({ bottleId, file, args = '', appId = null, name }) {
     }
     log(`■ ${label} exited (code ${code ?? '?'}) after ${secs}s`, code ? 'warn' : 'info');
     emit('running');
+    if (code && !stopped && !installer && secs < 6) emit('crashed', { name: label, code });
     if (installer) trackInstall(b, before, label).catch((e) => log(`Could not detect installed apps: ${e.message}`, 'warn'));
+    if (/^steam\.exe$/i.test(path.basename(file))) {
+      const added = importSteamGames(b.id);
+      if (added.length) emit('installed', { bottleId: b.id, installer: 'Steam', added: added.map((a) => a.name), candidates: [] });
+    }
   };
   child.on('exit', done);
   child.on('error', (e) => { log(`${label}: ${e.message}`, 'error'); done(-1); });
@@ -206,12 +214,12 @@ function launch({ bottleId, file, args = '', appId = null, name }) {
 }
 
 function runningList() {
-  return [...running.values()].map(({ child, ...rest }) => rest);
+  return [...running.values()].map(({ child, stopped, ...rest }) => rest);
 }
 
 function stop(runId) {
   const r = running.get(runId);
-  if (r) r.child.kill('SIGTERM');
+  if (r) { r.stopped = true; r.child.kill('SIGTERM'); }
 }
 
 async function kill(bottleId) {
@@ -224,7 +232,7 @@ async function kill(bottleId) {
       c.on('error', resolve);
     });
   }
-  for (const r of running.values()) if (r.bottleId === bottleId) r.child.kill('SIGKILL');
+  for (const r of running.values()) if (r.bottleId === bottleId) { r.stopped = true; r.child.kill('SIGKILL'); }
   log(`Stopped everything in “${b.name}”`);
 }
 
@@ -331,9 +339,15 @@ function prettyName(exe) {
   return n.replace(/[_-]+/g, ' ').replace(/([a-z])([A-Z])/g, '$1 $2').trim();
 }
 
-function addApp({ bottleId, exe, name, args = '' }) {
+function addApp({ bottleId, exe, name, args = '', steamAppId }) {
   bottle(bottleId);
-  const a = { id: `app-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 6)}`, bottleId, exe, name: name || prettyName(exe), args, added: Date.now(), playtime: 0 };
+  const game = steamAppId ? null : steamlib.gameForExe(exe);
+  const a = {
+    id: `app-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 6)}`,
+    bottleId, exe, name: game?.name || name || prettyName(exe), args, added: Date.now(), playtime: 0,
+    steamAppId: steamAppId || game?.appid || null,
+    icon: icons.extract(exe),
+  };
   store.get().apps.push(a);
   store.save();
   return a;
@@ -345,6 +359,26 @@ function updateApp(id, patch) {
   for (const k of ['name', 'args', 'bottleId', 'exe']) if (patch[k] !== undefined) a[k] = patch[k];
   store.save();
   return a;
+}
+
+// Fills in icons for apps added before icon support, or whose exe changed.
+function refreshIcons() {
+  let changed = false;
+  for (const a of store.get().apps) {
+    if (a.icon && fs.existsSync(a.icon)) continue;
+    const icon = icons.extract(a.exe);
+    if (icon) { a.icon = icon; changed = true; }
+  }
+  if (changed) store.save();
+}
+
+// Adds every installed Steam game in a bottle that isn't in the library yet.
+function importSteamGames(bottleId) {
+  const known = new Set(store.get().apps.map((a) => a.exe.toLowerCase()));
+  const games = steamlib.installedGames(driveC(bottleId)).filter((g) => !known.has(g.exe.toLowerCase()));
+  const added = games.map((g) => addApp({ bottleId, exe: g.exe, name: g.name, steamAppId: g.steamAppId }));
+  if (added.length) log(`Imported from Steam: ${added.map((a) => a.name).join(', ')}`);
+  return added;
 }
 
 function removeApp(id) {
@@ -369,7 +403,8 @@ function steamStatus() {
   const s = store.get();
   const b = s.bottles.find((x) => x.steam);
   const exe = b && findSteam(b);
-  const appEntry = exe && s.apps.find((a) => a.exe === exe);
+  let appEntry = exe && s.apps.find((a) => a.exe === exe);
+  if (exe && !appEntry) appEntry = addApp({ bottleId: b.id, exe, name: 'Steam', args: STEAM_ARGS });
   return { bottleId: b?.id || null, installed: !!exe, appId: appEntry?.id || null };
 }
 
@@ -399,5 +434,5 @@ async function installSteam(onProgress) {
 
 module.exports = {
   init, setEngine, getEngine, createBottle, deleteBottle, setWinver, setRetina, launch, runningList, stop, kill,
-  tool, driveC, scan, isInstaller, addApp, updateApp, removeApp, runApp, steamStatus, installSteam, prefixOf, bottle,
+  tool, driveC, scan, isInstaller, addApp, refreshIcons, importSteamGames, updateApp, removeApp, runApp, steamStatus, installSteam, prefixOf, bottle,
 };

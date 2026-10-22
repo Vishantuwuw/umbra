@@ -40,6 +40,8 @@ function onRuntimeEvent(type, payload) {
     send('log', payload);
   } else if (type === 'running') {
     pushState();
+  } else if (type === 'crashed') {
+    send('crashed', payload);
   } else if (type === 'installed') {
     pushState();
     send('installed', payload);
@@ -125,6 +127,7 @@ async function boot() {
   splashStep(60, cpuInfo.appleSilicon ? (cpuInfo.rosetta ? 'Rosetta 2 ready' : 'Rosetta 2 not installed') : 'Checking processor');
   await sleep(200);
   splashStep(74, `Loading ${store.get().bottles.length} bottle(s) and ${store.get().apps.length} app(s)`);
+  runtime.refreshIcons();
   createMain();
   await new Promise((r) => main.once('ready-to-show', r));
   splashStep(90, 'Preparing interface');
@@ -254,6 +257,11 @@ handle('dialog:exe', async () => {
   return r.canceled ? null : r.filePaths[0];
 });
 
+handle('steam:import', () => {
+  const st = runtime.steamStatus();
+  if (!st.bottleId) throw new Error('Install Steam first');
+  return runtime.importSteamGames(st.bottleId).map((a) => a.name);
+});
 handle('steam:install', () => task('steam', 'Installing Steam', (p) => runtime.installSteam(p)));
 
 handle('open:external', (url) => shell.openExternal(url));

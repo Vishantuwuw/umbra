@@ -71,6 +71,21 @@ function ago(t) {
   return `${Math.round(d / 86400)}d ago`;
 }
 const basename = (p) => p.split(/[\\/]/).pop();
+const fileUrl = (p) => `file://${encodeURI(p).replace(/#/g, '%23').replace(/\?/g, '%3F')}`;
+const steamImgs = (id, kind) => [
+  `https://shared.akamai.steamstatic.com/store_item_assets/steam/apps/${id}/${kind}`,
+  `https://cdn.cloudflare.steamstatic.com/steam/apps/${id}/${kind}`,
+];
+// <img> that walks a list of fallback URLs, then removes itself (see the error listener below).
+const img = (urls, cls) => `<img class="${cls}" src="${esc(urls[0])}" data-fallbacks="${esc(urls.slice(1).join('|'))}" alt="" draggable="false">`;
+function appArt(a, big) {
+  const own = a.icon ? img([fileUrl(a.icon)], big ? 'hero-icon' : 'app-icon') : '';
+  if (a.steamAppId) {
+    return own + (big ? img([...steamImgs(a.steamAppId, 'library_hero.jpg'), ...steamImgs(a.steamAppId, 'header.jpg')], 'cover')
+      : img([...steamImgs(a.steamAppId, 'library_600x900_2x.jpg'), ...steamImgs(a.steamAppId, 'library_600x900.jpg'), ...steamImgs(a.steamAppId, 'header.jpg')], 'cover'));
+  }
+  return own;
+}
 const bottleName = (id) => S.bottles.find((b) => b.id === id)?.name || 'Missing bottle';
 const isRunning = (appId) => S.running.some((r) => r.appId === appId);
 
@@ -113,7 +128,7 @@ function renderTop() {
   $('#title').textContent = v.title;
   $('#subtitle').textContent = v.sub();
   const actions = {
-    library: `<button class="btn" data-act="add-app">${icon('plus')}Add App</button><button class="btn primary" data-act="run-exe">${icon('play')}Run .exe…</button>`,
+    library: `${S.apps.length > 1 ? `<label class="search">${icon('search')}<input id="search" placeholder="Search library" value="${esc(query)}" spellcheck="false"></label>` : ''}<button class="btn" data-act="add-app">${icon('plus')}Add App</button><button class="btn primary" data-act="run-exe">${icon('play')}Run .exe…</button>`,
     bottles: `<button class="btn primary" data-act="new-bottle">${icon('plus')}New Bottle</button>`,
     steam: '',
     engine: `<button class="btn" data-act="redetect">${icon('refresh')}Re-detect</button>`,
@@ -125,7 +140,7 @@ function renderTop() {
 function render() {
   if (!S) return;
   renderNav();
-  renderTop();
+  if (document.activeElement?.id !== 'search') renderTop();
   const fn = { library: viewLibrary, bottles: viewBottles, steam: viewSteam, engine: viewEngine, console: viewConsole }[view];
   const scroll = $('#view').scrollTop;
   $('#view').innerHTML = fn();
@@ -155,7 +170,8 @@ function tile(a) {
   return `<div class="tile" data-app="${a.id}">
     <div class="art" data-act="play" data-id="${a.id}">
       <div class="art-bg" style="background:${artFor(a.name)}"></div>
-      <div class="letter">${esc(initial(a.name))}</div>
+      ${a.icon ? '' : `<div class="letter">${esc(initial(a.name))}</div>`}
+      ${appArt(a)}
       ${live ? '<div class="live-badge"><div class="dot live"></div>Running</div>' : ''}
       <div class="play"><div class="play-circle">${icon('play')}</div></div>
     </div>
@@ -164,8 +180,10 @@ function tile(a) {
   </div>`;
 }
 
+let query = '';
 function viewLibrary() {
   const apps = [...S.apps].sort((x, y) => (y.lastPlayed || y.added) - (x.lastPlayed || x.added));
+  const shown = query ? apps.filter((a) => `${a.name} ${bottleName(a.bottleId)}`.toLowerCase().includes(query.toLowerCase())) : apps;
   if (!apps.length) {
     return `${engineBanner()}
       <div class="empty" data-act="run-exe" style="margin-top:12px">
@@ -182,7 +200,7 @@ function viewLibrary() {
   const hero = apps[0];
   return `${engineBanner()}
     <div class="hero">
-      <div class="art" style="background:${artFor(hero.name)}"><div class="letter">${esc(initial(hero.name))}</div></div>
+      <div class="art" style="background:${artFor(hero.name)}">${hero.icon ? '' : `<div class="letter">${esc(initial(hero.name))}</div>`}${appArt(hero, true)}</div>
       <div class="info">
         <div class="kicker">${isRunning(hero.id) ? 'Now playing' : hero.lastPlayed ? `Last played ${ago(hero.lastPlayed)}` : 'Recently added'}</div>
         <h3>${esc(hero.name)}</h3>
@@ -195,8 +213,8 @@ function viewLibrary() {
         </div>
       </div>
     </div>
-    <div class="section-h"><h2>All Apps</h2></div>
-    <div class="grid">${apps.map(tile).join('')}</div>`;
+    <div class="section-h"><h2>${query ? `Results for “${esc(query)}”` : 'All Apps'}</h2><span class="faint">${shown.length} of ${apps.length}</span></div>
+    ${shown.length ? `<div class="grid">${shown.map(tile).join('')}</div>` : '<p class="muted">Nothing matches that search.</p>'}`;
 }
 
 // ---------- Bottles ----------
@@ -242,13 +260,13 @@ function viewSteam() {
     action = isRunning(st.appId)
       ? `<button class="btn lg" data-act="stop-app" data-id="${st.appId}">${icon('stop')}Stop Steam</button>`
       : `<button class="btn lg primary" data-act="play" data-id="${st.appId}">${icon('play')}Launch Steam</button>`;
-    action += ` <button class="btn lg" data-act="bottle-scan" data-id="${st.bottleId}">${icon('search')}Add Installed Games</button>`;
+    action += ` <button class="btn lg" data-act="steam-import">${icon('download')}Import Steam Games</button>`;
   } else action = `<button class="btn lg glow" data-act="install-steam" ${S.engine ? '' : 'disabled'}>${icon('download')}Install Steam for Windows</button>`;
   return `${engineBanner()}
     <div class="steam-hero">
       <div class="orb"></div>
       <h2>${st.installed ? 'Steam is ready.' : 'Play your Windows Steam games on macOS.'}</h2>
-      <p>${st.installed ? 'Launch Steam, sign in and install games the usual way. Use “Add Installed Games” to pin them to your Library for one-click play.'
+      <p>${st.installed ? 'Launch Steam, sign in and install games the usual way. When Steam closes, Umbra imports your installed games — with their cover art — into the Library. Or import them now.'
         : 'Umbra creates a dedicated Windows 10 bottle, downloads the official Steam installer from Valve and sets it up — no Windows license needed.'}</p>
       <div class="row" style="display:flex;gap:10px">${action}</div>
     </div>
@@ -542,6 +560,11 @@ const actions = {
     await call('steam:install');
     toast('Steam installed — launch it from here or your Library');
   },
+  'steam-import': async () => {
+    const names = await call('steam:import');
+    toast(names.length ? `Imported ${names.length} game${names.length === 1 ? '' : 's'}: ${names.join(', ')}` : 'No new Steam games found');
+    if (names.length) go('library');
+  },
   toggle: (el) => call('settings:set', { [el.dataset.key]: !S.settings[el.dataset.key] }),
   'clear-logs': async () => { await call('logs:clear'); logs = []; paintLogs(); },
 };
@@ -554,6 +577,21 @@ document.addEventListener('click', (e) => {
     e.stopPropagation();
     Promise.resolve(actions[act.dataset.act](act)).catch(() => {});
   }
+});
+
+window.addEventListener('error', (e) => {
+  const el = e.target;
+  if (el.tagName !== 'IMG' || el.dataset.fallbacks === undefined) return;
+  const [next, ...rest] = el.dataset.fallbacks.split('|').filter(Boolean);
+  if (!next) { el.remove(); return; }
+  el.dataset.fallbacks = rest.join('|');
+  el.src = next;
+}, true);
+
+document.addEventListener('input', (e) => {
+  if (e.target.id !== 'search') return;
+  query = e.target.value;
+  if (view === 'library') { $('#view').innerHTML = viewLibrary(); }
 });
 
 // ---------- drag & drop ----------
@@ -608,6 +646,9 @@ api.on('installed', ({ bottleId, installer, added, candidates }) => {
   } else {
     toast(`${installer} finished — no new programs found`);
   }
+});
+api.on('crashed', ({ name, code }) => {
+  toast(`${name} closed right away (code ${code}). It may need Visual C++ or .NET — see Bottles → Components, and the Console for details.`, 'error');
 });
 api.on('open-files', (files) => { const f = files.find((p) => RUNNABLE.test(p)); if (f) runFileFlow(f); });
 

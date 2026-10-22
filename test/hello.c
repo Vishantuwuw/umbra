@@ -1,5 +1,5 @@
 // Tiny Win32 GUI program used to verify Umbra can launch real .exe files.
-// Build: x86_64-w64-mingw32-gcc -O2 -mwindows -o hello.exe hello.c
+// Build: x86_64-w64-mingw32-windres hello.rc -O coff -o hello-res.o && x86_64-w64-mingw32-gcc -O2 -mwindows -o hello.exe hello.c hello-res.o
 #include <windows.h>
 
 static LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
