@@ -10,3 +10,31 @@ Umbra isn't notarized by Apple, so macOS will block it the first time:
 3. In Umbra, open **Engine → Install Engine** (and **Install Rosetta** on Apple Silicon).
 
 Then drop any `.exe` onto the window, or go to **Steam → Install Steam for Windows**.
+
+## Screenshots
+
+**A Windows .exe running on a real Apple Silicon Mac**
+![Windows exe running on macOS](https://raw.githubusercontent.com/{{REPO}}/{{SHA}}/docs/screenshots/mac-exe-running.png)
+
+**Loading screen**
+![Loading screen](https://raw.githubusercontent.com/{{REPO}}/{{SHA}}/docs/screenshots/loading-47.png)
+
+**Library**
+![Library](https://raw.githubusercontent.com/{{REPO}}/{{SHA}}/docs/screenshots/library-running.png)
+
+**Bottles: separate Windows environments**
+![Bottles](https://raw.githubusercontent.com/{{REPO}}/{{SHA}}/docs/screenshots/bottles.png)
+
+**Run any .exe**
+![Run dialog](https://raw.githubusercontent.com/{{REPO}}/{{SHA}}/docs/screenshots/run-dialog.png)
+
+**One-click Steam**
+![Steam](https://raw.githubusercontent.com/{{REPO}}/{{SHA}}/docs/screenshots/steam.png)
+
+**Engine & performance**
+![Engine](https://raw.githubusercontent.com/{{REPO}}/{{SHA}}/docs/screenshots/engine.png)
+
+**Live console**
+![Console](https://raw.githubusercontent.com/{{REPO}}/{{SHA}}/docs/screenshots/console.png)
+
+All screenshots are also attached below as files.

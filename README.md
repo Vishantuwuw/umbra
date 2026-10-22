@@ -10,6 +10,13 @@
 - **Performance toggles**: MSync, ESync, Metal HUD and Retina mode.
 - **Live console**: shows Wine output, lists running processes, and lets you force-quit them.
 
+| | |
+|---|---|
+| ![Windows exe running on macOS](docs/screenshots/mac-exe-running.png) | ![Loading screen](docs/screenshots/loading-47.png) |
+| ![Library](docs/screenshots/library-running.png) | ![Bottles](docs/screenshots/bottles.png) |
+| ![Run dialog](docs/screenshots/run-dialog.png) | ![Steam](docs/screenshots/steam.png) |
+| ![Engine](docs/screenshots/engine.png) | ![Console](docs/screenshots/console.png) |
+
 ## Install
 
 1. Download the latest `.dmg` from **[Releases](../../releases)**: `arm64` for Apple Silicon, `x64` for Intel Macs.
