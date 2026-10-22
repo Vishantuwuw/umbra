@@ -124,6 +124,11 @@ app.whenReady().then(async () => {
           console.log(`----- Steam ${f} (last lines) -----\n${txt}`);
         } catch {}
       }
+      try {
+        const wf = require('fs').readFileSync(path.join(steamApp.exe.replace(/([\/]drive_c)[\/].*$/i, '$1'), 'umbra', 'winfix.log'), 'utf8').trim().split('\n');
+        console.log(`----- winfix.log (${wf.length} lines; windows that aren't hidden helpers) -----\n${[wf[0], ...wf.filter((l) => / vis=1 |moved|move-failed/.test(l))].slice(0, 80).join('\n')}`);
+      } catch (e) { console.log(`winfix.log missing: ${e.message}`); }
+      try { console.log(`winfix process: ${execFileSync('/bin/ps', ['-axo', 'pid,command']).toString().split('\n').filter((l) => /winfix/i.test(l)).join(' | ') || 'not running'}`); } catch {}
       const read = (f) => { try { return require('fs').readFileSync(path.join(logs, f), 'utf8'); } catch { return ''; } };
       const cef = read('cef_log.txt');
       const pollFails = (cef.match(/Failed to poll auth session/g) || []).length;
