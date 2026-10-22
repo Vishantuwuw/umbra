@@ -267,3 +267,4 @@ select.input { appearance: none; background-image: linear-gradient(45deg, transp
 .comp span { color: var(--faint); font-size: 12px; }
 .comp .comp-ok { display: flex; align-items: center; gap: 5px; color: var(--green); font-size: 12px; font-weight: 600; }
 .tag-exp { font-size: 10px !important; font-weight: 600; letter-spacing: .06em; text-transform: uppercase; color: var(--amber) !important; border: 1px solid rgba(251,191,36,.35); border-radius: 6px; padding: 1px 6px; }
+.pill.update { border-color: rgba(34,211,238,.35); background: linear-gradient(90deg, rgba(34,211,238,.1), transparent), var(--panel); }

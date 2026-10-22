@@ -117,6 +117,7 @@ function renderNav() {
   const rosettaMissing = S.cpu.appleSilicon && !S.cpu.rosetta;
   $('#side-foot').innerHTML = `
     ${S.running.length ? `<div class="pill" data-nav="console" style="cursor:pointer"><div class="dot live"></div><div><b>${S.running.length} running</b><span>${esc(S.running.map((r) => r.name).join(', '))}</span></div></div>` : ''}
+    ${S.update ? `<div class="pill update" data-act="open-update" style="cursor:pointer"><div class="dot live"></div><div><b>Update available</b><span>Umbra ${esc(S.update.version)} · click to download</span></div></div>` : ''}
     <div class="pill" data-nav="engine" style="cursor:pointer">
       <div class="dot ${e && !rosettaMissing ? 'ok' : 'warn'}"></div>
       <div><b>${e ? 'Engine ready' : 'No engine'}</b><span>${e ? esc(e.version || e.source) : 'Click to install'}${rosettaMissing ? ' · Rosetta needed' : ''}</span></div>
@@ -606,6 +607,7 @@ const actions = {
     toast(names.length ? `Imported ${names.length} game${names.length === 1 ? '' : 's'}: ${names.join(', ')}` : 'No new Steam games found');
     if (names.length) go('library');
   },
+  'open-update': () => call('open:external', S.update.url),
   toggle: (el) => call('settings:set', { [el.dataset.key]: !S.settings[el.dataset.key] }),
   'clear-logs': async () => { await call('logs:clear'); logs = []; paintLogs(); },
 };
@@ -687,6 +689,11 @@ api.on('installed', ({ bottleId, installer, added, candidates }) => {
   } else {
     toast(`${installer} finished — no new programs found`);
   }
+});
+api.on('menu', (name) => {
+  if (name.startsWith('nav:')) return go(name.slice(4));
+  if (name === 'install-steam') { go('steam'); if (!S.steam.installed) actions['install-steam'](); return; }
+  actions[name]?.();
 });
 api.on('crashed', ({ name, code }) => {
   toast(`${name} closed right away (code ${code}). It may need Visual C++ or .NET: open Bottles → Components. The Console has details.`, 'error');

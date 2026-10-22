@@ -7,6 +7,8 @@ const components = require('./components');
 
 const RENDERER = path.join(__dirname, 'renderer');
 const MIN_SPLASH_MS = 2600;
+const REPO_URL = 'https://github.com/Vishantuwuw/umbra';
+const LATEST_API = 'https://api.github.com/repos/Vishantuwuw/umbra/releases/latest';
 
 let splash = null;
 let main = null;
@@ -14,6 +16,27 @@ let cpuInfo = { appleSilicon: false, rosetta: true };
 let logs = [];
 let pendingFiles = [];
 const tasks = new Map();
+let update = null; // { version, url } when a newer release exists
+
+const newer = (a, b) => {
+  const pa = a.split('.').map(Number);
+  const pb = b.split('.').map(Number);
+  for (let i = 0; i < 3; i++) if ((pa[i] || 0) !== (pb[i] || 0)) return (pa[i] || 0) > (pb[i] || 0);
+  return false;
+};
+
+async function checkForUpdate() {
+  try {
+    const res = await fetch(LATEST_API, { headers: { 'User-Agent': 'Umbra', Accept: 'application/vnd.github+json' } });
+    if (!res.ok) return;
+    const rel = await res.json();
+    const v = String(rel.tag_name || '').replace(/^v/, '');
+    if (v && newer(v, app.getVersion())) {
+      update = { version: v, url: rel.html_url };
+      pushState();
+    }
+  } catch {}
+}
 
 app.setName('Umbra');
 if (process.env.UMBRA_HOME) app.setPath('userData', process.env.UMBRA_HOME);
@@ -62,6 +85,7 @@ function state() {
     steam: runtime.steamStatus(),
     tasks: [...tasks.values()],
     version: app.getVersion(),
+    update,
   };
 }
 
@@ -140,6 +164,7 @@ async function boot() {
   splash.close();
   splash = null;
   flushFiles();
+  checkForUpdate();
 }
 
 function createMain() {
@@ -277,8 +302,32 @@ handle('open:external', (url) => shell.openExternal(url));
 
 app.whenReady().then(() => {
   if (process.platform === 'darwin') {
+    const cmd = (name) => () => send('menu', name);
     Menu.setApplicationMenu(Menu.buildFromTemplate([
-      { role: 'appMenu' }, { role: 'fileMenu' }, { role: 'editMenu' }, { role: 'viewMenu' }, { role: 'windowMenu' },
+      { role: 'appMenu' },
+      {
+        label: 'File',
+        submenu: [
+          { label: 'Run Windows Program…', accelerator: 'Cmd+O', click: cmd('run-exe') },
+          { label: 'Add App to Library…', accelerator: 'Cmd+Shift+A', click: cmd('add-app') },
+          { label: 'New Bottle…', accelerator: 'Cmd+N', click: cmd('new-bottle') },
+          { type: 'separator' },
+          { label: 'Install Steam', click: cmd('install-steam') },
+          { type: 'separator' },
+          { role: 'close' },
+        ],
+      },
+      { role: 'editMenu' },
+      {
+        label: 'View',
+        submenu: [
+          ...['Library', 'Bottles', 'Steam', 'Engine', 'Console'].map((v, i) => ({ label: v, accelerator: `Cmd+${i + 1}`, click: () => send('menu', `nav:${v.toLowerCase()}`) })),
+          { type: 'separator' },
+          { role: 'reload' }, { role: 'togglefullscreen' },
+        ],
+      },
+      { role: 'windowMenu' },
+      { role: 'help', submenu: [{ label: 'Umbra on GitHub', click: () => shell.openExternal(REPO_URL) }] },
     ]));
   } else {
     Menu.setApplicationMenu(null);
