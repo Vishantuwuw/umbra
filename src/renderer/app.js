@@ -182,16 +182,16 @@ function go(v) {
 }
 
 // Shown until setup has finished; the welcome wizard does the actual work.
-// Apps in bottles built by another engine can't run on this one (after upgrading to
-// the CrossOver engine, setup reinstalls them in a fresh bottle).
+// Apps in bottles built by another engine can't run on this one (after switching
+// engines, setup reinstalls them in a fresh bottle).
 const fitsEngine = (a) => (S.bottles.find((b) => b.id === a.bottleId)?.engineKind || 'wine') === S.engineKind;
 
 function engineBanner() {
   const busy = S.tasks.find((t) => t.id === 'setup');
   const upgrading = S.tasks.find((t) => t.id === 'engine');
-  if (S.platform === 'darwin' && S.engine && S.engineKind !== 'cx' && !busy) {
-    return `<div class="banner"><div class="badge-icon">${icon('bolt')}</div><div class="grow"><b>${upgrading ? 'Installing the CrossOver engine…' : 'Upgrade to the CrossOver engine'}</b><span>${upgrading ? esc(taskPct.engine?.detail || upgrading.detail) : 'The same Windows engine CrossOver uses. Steam and games work much better. Setup then reinstalls Steam with it.'}</span></div>
-      <button class="btn glow" data-act="upgrade-engine" ${upgrading ? 'disabled' : ''}>${upgrading ? `${Math.round((taskPct.engine?.pct ?? 0) * 100)}%` : `${icon('download')}Upgrade`}</button></div>`;
+  if (S.platform === 'darwin' && S.engine && S.engineKind === 'cx' && !busy) {
+    return `<div class="banner"><div class="badge-icon">${icon('bolt')}</div><div class="grow"><b>${upgrading ? 'Installing the recommended engine…' : 'Switch to the recommended engine'}</b><span>${upgrading ? esc(taskPct.engine?.detail || upgrading.detail) : 'Steam doesn’t start on the CrossOver engine (error 0x3008). The recommended engine (Wine 11) runs it. Setup then reinstalls Steam with it.'}</span></div>
+      <button class="btn glow" data-act="upgrade-engine" ${upgrading ? 'disabled' : ''}>${upgrading ? `${Math.round((taskPct.engine?.pct ?? 0) * 100)}%` : `${icon('download')}Switch`}</button></div>`;
   }
   if (S.settings.setupDone && S.engine && S.bottles.length && !(S.cpu.appleSilicon && !S.cpu.rosetta)) return '';
   return `<div class="banner"><div class="badge-icon">${icon('bolt')}</div><div class="grow"><b>${busy ? 'Setting up Umbra…' : 'Umbra isn’t set up yet'}</b><span>${busy ? esc(taskPct.setup?.detail || busy.detail) : 'One click installs everything needed to run Windows games and apps.'}</span></div>
@@ -381,7 +381,7 @@ function viewSettings() {
       </dl>
       <div style="display:flex;gap:10px;flex-wrap:wrap">
         ${t ? `<button class="btn glow" disabled>Installing… ${pct}%</button>`
-          : `<button class="btn ${e ? '' : 'glow'}" data-act="install-engine" ${S.platform === 'darwin' ? '' : 'disabled'}>${icon('download')}${S.engineKind === 'cx' ? 'Reinstall CrossOver Engine' : 'Install CrossOver Engine'}</button>`}
+          : `<button class="btn ${e ? '' : 'glow'}" data-act="install-engine" ${S.platform === 'darwin' ? '' : 'disabled'}>${icon('download')}${e && S.engineKind !== 'cx' ? 'Reinstall Engine' : 'Install Recommended Engine'}</button>`}
         <button class="btn" data-act="choose-engine">${icon('file')}Use Custom Wine…</button>
         ${s.enginePath ? '<button class="btn ghost" data-act="reset-engine">Reset to automatic</button>' : ''}
         ${S.cpu.appleSilicon && !S.cpu.rosetta ? '<button class="btn glow" data-act="rosetta">Install Rosetta</button>' : ''}
@@ -879,7 +879,7 @@ const actions = {
   },
   'upgrade-engine': async () => {
     await call('engine:install');
-    toast('CrossOver engine installed. Now let’s set things up with it.');
+    toast('Engine installed. Now let’s set things up with it.');
     openWizard();
   },
   'install-engine': async () => {

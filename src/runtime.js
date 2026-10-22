@@ -299,7 +299,7 @@ function launch({ bottleId, file, args = '', appId = null, name, steamAttempt = 
   const b = bottle(bottleId);
   if (!fs.existsSync(file)) throw new Error(`File not found: ${file}`);
   if (bottleKind(b) !== engineKind()) {
-    throw new Error(`“${b.name}” was set up with ${bottleKind(b) === 'cx' ? 'the CrossOver engine' : 'Umbra’s old engine'}. Run setup again (Settings → Run Setup Again) and reinstall this app there.`);
+    throw new Error(`“${b.name}” was set up with ${bottleKind(b) === 'cx' ? 'the CrossOver engine' : 'the Wine 11 engine'}. Run setup again (Settings → Run Setup Again) and reinstall this app there.`);
   }
   const runId = ++runSeq;
   const label = name || path.basename(file);

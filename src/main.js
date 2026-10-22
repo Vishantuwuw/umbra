@@ -271,7 +271,7 @@ handle('state', () => state());
 handle('logs', () => logs);
 handle('logs:clear', () => { logs = []; });
 
-handle('engine:install', () => task('engine', 'Installing the CrossOver engine', async (p) => {
+handle('engine:install', () => task('engine', 'Installing the Windows engine', async (p) => {
   const eng = await engine.install(p);
   runtime.setEngine(eng);
   store.get().settings.enginePath = null;

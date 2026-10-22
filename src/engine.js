@@ -81,8 +81,8 @@ function findWineIn(root, depth = 7) {
 function candidates() {
   const home = os.homedir();
   const list = [
-    { source: 'CrossOver engine', find: () => pickInBin(path.join(cxDir(), 'wine', 'bin')) },
     { source: 'Umbra engine', find: () => findWineIn(engineDir()) },
+    { source: 'CrossOver engine', find: () => pickInBin(path.join(cxDir(), 'wine', 'bin')) },
   ];
   // Engines with Apple's D3DMetal (DirectX 11/12 → Metal), from Whisky or the Game Porting Toolkit.
   list.push({ source: 'Whisky (D3DMetal)', find: () => pickInBin(path.join(home, 'Library/Application Support/com.isaacmarovitz.Whisky/Libraries/Wine/bin')) });
@@ -217,9 +217,10 @@ async function download(url, dest, onProgress, { signal } = {}) {
 }
 
 // Which Wine build flavor to prefer; UMBRA_ENGINE_FLAVOR=devel|staging puts that one first.
-// The CrossOver engine is the default; UMBRA_ENGINE_FLAVOR=stable|staging|devel picks a
-// plain Wine build instead.
-const wantsPlainWine = () => ['stable', 'staging', 'devel'].includes(process.env.UMBRA_ENGINE_FLAVOR);
+// Plain Wine (11.x) is the default: on the Mac test Steam reaches its sign-in window
+// on it, while the CrossOver engine (WineCX 24, based on Wine 9) stops with error
+// 0x3008. UMBRA_ENGINE_FLAVOR=cx installs the CrossOver engine instead.
+const wantsCx = () => process.env.UMBRA_ENGINE_FLAVOR === 'cx';
 
 function flavorOrder() {
   const order = ['stable', 'staging', 'devel'];
@@ -273,11 +274,8 @@ async function latestRelease() {
 let engineInstall = null;
 
 // Setup and the Engine page can both start an install; share one instead of racing.
-function install(onProgress, { plain = wantsPlainWine() } = {}) {
-  engineInstall ||= (plain ? doInstall(onProgress) : installCx(onProgress).catch((e) => {
-    console.warn(`Umbra: CrossOver engine install failed (${e.message}); installing plain Wine instead`);
-    return doInstall(onProgress);
-  })).finally(() => { engineInstall = null; });
+function install(onProgress, { cx = wantsCx() } = {}) {
+  engineInstall ||= (cx ? installCx(onProgress) : doInstall(onProgress)).finally(() => { engineInstall = null; });
   return engineInstall;
 }
 
