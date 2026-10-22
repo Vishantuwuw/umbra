@@ -71,14 +71,47 @@ function findWineIn(root, depth = 7) {
 }
 
 function candidates() {
+  const home = os.homedir();
   const list = [{ source: 'Umbra engine', find: () => findWineIn(engineDir()) }];
+  // Engines with Apple's D3DMetal (DirectX 11/12 → Metal), from Whisky or the Game Porting Toolkit.
+  list.push({ source: 'Whisky (D3DMetal)', find: () => pickInBin(path.join(home, 'Library/Application Support/com.isaacmarovitz.Whisky/Libraries/Wine/bin')) });
+  for (const base of ['/opt/homebrew/opt', '/usr/local/opt']) {
+    list.push({ source: 'Game Porting Toolkit', find: () => pickInBin(path.join(base, 'game-porting-toolkit/bin')) });
+  }
   for (const flavor of ['Stable', 'Staging', 'Devel', 'Crossover']) {
-    for (const base of ['/Applications', path.join(os.homedir(), 'Applications')]) {
+    for (const base of ['/Applications', path.join(home, 'Applications')]) {
       list.push({ source: `Wine ${flavor}.app`, find: () => pickInBin(path.join(base, `Wine ${flavor}.app/Contents/Resources/wine/bin`)) });
     }
   }
   for (const bin of envPath().split(':')) list.push({ source: 'System', find: () => pickInBin(bin) });
   return list;
+}
+
+// D3DMetal ships next to Wine as a framework in Whisky/GPTK builds.
+function hasD3DMetal(bin) {
+  const root = path.dirname(path.dirname(bin));
+  return ['lib/external/D3DMetal.framework', 'lib/external/libd3dshared.dylib', 'lib/D3DMetal.framework']
+    .some((p) => fs.existsSync(path.join(root, p)));
+}
+
+async function describe(p, source) {
+  return { path: p, source, version: await version(p), d3dmetal: hasD3DMetal(p) };
+}
+
+// Every Wine engine on this Mac, for the engine picker.
+async function detectAll() {
+  const seen = new Set();
+  const out = [];
+  for (const c of candidates()) {
+    const p = c.find();
+    if (!p) continue;
+    let real = p;
+    try { real = fs.realpathSync(p); } catch {}
+    if (seen.has(real)) continue;
+    seen.add(real);
+    out.push(await describe(p, c.source));
+  }
+  return out;
 }
 
 async function version(bin) {
@@ -92,11 +125,12 @@ async function version(bin) {
 
 async function detect(customPath) {
   if (customPath && isExecutable(customPath)) {
-    return { path: customPath, source: 'Custom', version: await version(customPath) };
+    const known = candidates().find((c) => c.find() === customPath);
+    return describe(customPath, known ? known.source : 'Custom');
   }
   for (const c of candidates()) {
     const p = c.find();
-    if (p) return { path: p, source: c.source, version: await version(p) };
+    if (p) return describe(p, c.source);
   }
   return null;
 }
@@ -220,4 +254,4 @@ async function install(onProgress) {
   return detect(null);
 }
 
-module.exports = { detect, install, githubRelease, brewRelease, download, cpu, installRosetta, wineserverFor, envPath, exec, cacheDir };
+module.exports = { detect, detectAll, install, githubRelease, brewRelease, download, cpu, installRosetta, wineserverFor, envPath, exec, cacheDir };

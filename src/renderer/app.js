@@ -26,6 +26,7 @@ const I = {
   terminal: '<rect x="3" y="4" width="18" height="16" rx="2"/><path d="m7 9 3 3-3 3M13 15h4"/>',
   window: '<rect x="3" y="4" width="18" height="16" rx="2"/><path d="M3 9h18"/>',
   shield: '<path d="M12 3 4 6v6c0 5 3.5 8 8 9 4.5-1 8-4 8-9V6z"/>',
+  star: '<path d="m12 3 2.7 5.6 6.1.9-4.4 4.3 1 6.1L12 17l-5.4 2.9 1-6.1L3.2 9.5l6.1-.9z"/>',
   gamepad: '<path d="M6 8h12a4 4 0 0 1 4 4v1a4 4 0 0 1-7 2.6L14 15h-4l-1 .6A4 4 0 0 1 2 13v-1a4 4 0 0 1 4-4zM8 10v4M6 12h4"/><circle cx="16" cy="11" r=".6"/><circle cx="18" cy="13" r=".6"/>',
 };
 const icon = (n) => `<svg viewBox="0 0 24 24">${I[n] || ''}</svg>`;
@@ -152,6 +153,7 @@ function render() {
 
 function go(v) {
   view = v;
+  if (v === 'engine') loadEngines();
   $('#view').style.animation = 'none';
   void $('#view').offsetWidth;
   $('#view').style.animation = '';
@@ -159,7 +161,26 @@ function go(v) {
   render();
 }
 
+function setupCard() {
+  const steps = [
+    ...(S.cpu.appleSilicon ? [['Rosetta 2', S.cpu.rosetta]] : []),
+    ['Wine engine', !!S.engine],
+    ['Windows 10 bottle', S.bottles.length > 0],
+    ['Visual C++ runtime', S.bottles.some((b) => b.components?.vcrun)],
+  ];
+  if (steps.every(([, done]) => done)) return '';
+  if (S.settings.setupDone && S.engine && S.bottles.length) return '';
+  const busy = S.tasks.find((t) => t.id === 'setup');
+  return `<div class="setup">
+    <div class="setup-text"><div class="kicker">Get started</div><h3>Set up Umbra in one click</h3>
+      <p>Everything needed to run Windows apps and games, installed and configured for you.</p>
+      <button class="btn lg glow" data-act="setup-all" ${busy ? 'disabled' : ''}>${busy ? `Setting up… ${Math.round((taskPct.setup?.pct ?? busy.pct ?? 0) * 100)}%` : `${icon('bolt')}Set up everything`}</button></div>
+    <ol class="setup-steps">${steps.map(([name, done]) => `<li class="${done ? 'done' : ''}"><span>${done ? icon('check') : ''}</span>${name}</li>`).join('')}</ol>
+  </div>`;
+}
+
 function engineBanner() {
+  if (view === 'library') { const c = setupCard(); if (c) return c; }
   if (S.engine && !(S.cpu.appleSilicon && !S.cpu.rosetta)) return '';
   if (!S.engine) return `<div class="banner"><div class="badge-icon">${icon('engine')}</div><div class="grow"><b>Install the Wine engine to start running Windows apps</b><span>One click. About 200 MB, downloaded once.</span></div><button class="btn glow" data-act="install-engine">${icon('download')}Install Engine</button></div>`;
   return `<div class="banner"><div class="badge-icon">${icon('chip')}</div><div class="grow"><b>Rosetta 2 is required on Apple Silicon</b><span>Windows programs are x86 code. Rosetta translates them for your M-series chip.</span></div><button class="btn glow" data-act="rosetta">Install Rosetta</button></div>`;
@@ -174,6 +195,7 @@ function tile(a) {
       ${a.icon ? '' : `<div class="letter">${esc(initial(a.name))}</div>`}
       ${appArt(a)}
       ${live ? '<div class="live-badge"><div class="dot live"></div>Running</div>' : ''}
+      ${a.favorite ? `<div class="fav-badge">${icon('star')}</div>` : ''}
       <div class="play"><div class="play-circle">${icon('play')}</div></div>
     </div>
     <div class="body"><div class="t"><b>${esc(a.name)}</b><span>${esc(bottleName(a.bottleId))} · ${fmtTime(a.playtime)}</span></div>
@@ -184,7 +206,8 @@ function tile(a) {
 let query = '';
 function viewLibrary() {
   const apps = [...S.apps].sort((x, y) => (y.lastPlayed || y.added) - (x.lastPlayed || x.added));
-  const shown = query ? apps.filter((a) => `${a.name} ${bottleName(a.bottleId)}`.toLowerCase().includes(query.toLowerCase())) : apps;
+  const shown0 = query ? apps.filter((a) => `${a.name} ${bottleName(a.bottleId)}`.toLowerCase().includes(query.toLowerCase())) : apps;
+  const shown = [...shown0.filter((a) => a.favorite), ...shown0.filter((a) => !a.favorite)];
   if (!apps.length) {
     return `${engineBanner()}
       <div class="empty" data-act="run-exe" style="margin-top:12px">
@@ -315,6 +338,14 @@ function viewEngine() {
       ${toggle('metalHud', 'Metal Performance HUD', 'FPS & GPU overlay for Metal-rendered games.')}
       ${toggle('verboseLogs', 'Verbose logging', 'Show Wine warnings in the Console for debugging.')}
     </div>
+  </div>
+  <div class="card engine-card" style="margin-top:18px">
+    <h3>Engines on this Mac</h3>
+    ${ENGINES === null ? '<p class="muted">Looking for Wine engines…</p>' : ENGINES.length ? `<div class="comp-list">${ENGINES.map((x) => `
+      <div class="comp"><div class="t"><b>${esc(x.source)} ${x.d3dmetal ? '<span class="tag-exp tag-dx">D3DMetal · DirectX 12</span>' : ''}</b><span class="mono">${esc(x.version || '')} · ${esc(x.path)}</span></div>
+      ${S.engine?.path === x.path ? `<span class="comp-ok">${icon('check')}In use</span>` : `<button class="btn sm" data-act="use-engine" data-path="${esc(x.path)}">Use</button>`}</div>`).join('')}</div>`
+      : '<p class="muted">None found yet. Install the Umbra engine above.</p>'}
+    <p class="faint" style="margin-top:12px;font-size:12px">Have <b>Whisky</b> or Apple’s <b>Game Porting Toolkit</b>? Umbra finds their D3DMetal engine here. Use it for DirectX 12 games.</p>
   </div>
   <div class="card engine-card credits">
     <h3>Credits</h3>
@@ -497,6 +528,11 @@ function pickAppsModal(bottleId, found, title, sub) {
 }
 
 let COMPONENTS = null;
+let ENGINES = null;
+async function loadEngines() {
+  ENGINES = await call('engine:list').catch(() => []);
+  if (view === 'engine') render();
+}
 async function componentsModal(bottleId) {
   COMPONENTS ||= await call('components:list');
   const b = S.bottles.find((x) => x.id === bottleId);
@@ -574,6 +610,7 @@ const actions = {
     const a = S.apps.find((x) => x.id === el.dataset.id);
     menu(el, [
       { icon: 'play', label: 'Play', run: () => call('app:run', a.id) },
+      { icon: 'star', label: a.favorite ? 'Remove from Favorites' : 'Add to Favorites', run: () => call('app:update', a.id, { favorite: !a.favorite }) },
       { icon: 'edit', label: 'Edit…', run: () => editAppModal(a) },
       { icon: 'folder', label: 'Show in Finder', run: () => call('app:reveal', a.id) },
       { icon: 'window', label: 'Add to Mac Applications', run: async () => { await call('app:launcher', a.id); toast(`${a.name} is now in ~/Applications/Umbra — find it in Launchpad or Spotlight`); } },
@@ -605,6 +642,10 @@ const actions = {
   'bottle-scan': (el) => scanModal(el.dataset.id),
   'bottle-tool': (el) => call('bottle:tool', el.dataset.id, el.dataset.tool),
   'bottle-kill': (el) => call('bottle:kill', el.dataset.id),
+  'setup-all': async () => {
+    await call('setup:all');
+    toast('Umbra is ready — drop in any .exe, or install Steam');
+  },
   'install-engine': async () => {
     go('engine');
     const e = await call('engine:install');
@@ -615,7 +656,14 @@ const actions = {
     if (e) toast(`Using ${e.version || e.path}`);
   },
   'reset-engine': async () => { await call('settings:set', { enginePath: null }); await call('engine:redetect'); },
-  redetect: async () => { const e = await call('engine:redetect'); toast(e ? `Found ${e.version || e.path}` : 'No Wine engine found', e ? 'ok' : 'error'); },
+  'use-engine': async (el) => {
+    const e = await call('engine:use', el.dataset.path);
+    toast(`Now using ${e.source}${e.d3dmetal ? ' (DirectX 12 ready)' : ''}`);
+    loadEngines();
+  },
+  redetect: async () => {
+    loadEngines();
+    const e = await call('engine:redetect'); toast(e ? `Found ${e.version || e.path}` : 'No Wine engine found', e ? 'ok' : 'error'); },
   rosetta: async () => { await call('engine:rosetta'); toast('Rosetta 2 installed'); },
   'install-steam': async () => {
     await call('steam:install');
@@ -687,7 +735,7 @@ api.on('state', (s) => {
 api.on('task', (t) => {
   taskPct[t.id] = { pct: t.pct, detail: t.detail };
   renderDock();
-  if (view === 'engine' || view === 'steam') render();
+  if (view === 'engine' || view === 'steam' || (view === 'library' && t.id === 'setup')) render();
 });
 api.on('log', (l) => {
   logs.push(l);

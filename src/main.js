@@ -224,8 +224,41 @@ handle('engine:choose', async () => {
   const r = await dialog.showOpenDialog(main, { title: 'Choose a wine or wine64 binary', properties: ['openFile', 'treatPackageAsDirectory'] });
   if (r.canceled) return null;
   const eng = await engine.detect(r.filePaths[0]);
-  if (!eng || eng.source !== 'Custom') throw new Error('That file is not a runnable Wine binary');
+  if (!eng) throw new Error('That file is not a runnable Wine binary');
   store.get().settings.enginePath = eng.path;
+  store.save();
+  runtime.setEngine(eng);
+  return eng;
+});
+// First-run setup: Rosetta, the Wine engine, a Windows 10 bottle and Visual C++.
+handle('setup:all', () => task('setup', 'Setting up Umbra', async (p) => {
+  if (cpuInfo.appleSilicon && !cpuInfo.rosetta) {
+    p(0.02, 'Installing Rosetta 2…');
+    await engine.installRosetta();
+    cpuInfo = await engine.cpu();
+  }
+  if (!runtime.getEngine()) {
+    const eng = await engine.install((f, l) => p(0.05 + f * 0.5, l));
+    runtime.setEngine(eng);
+  }
+  let b = store.get().bottles.find((x) => x.ready) || store.get().bottles[0];
+  if (!b) b = await runtime.createBottle({ name: 'Default', winver: 'win10' }, (f, l) => p(0.55 + f * 0.25, l));
+  if (!b.components?.vcrun) {
+    try {
+      await runtime.installComponent(b.id, 'vcrun', (f, l) => p(0.8 + f * 0.2, l));
+    } catch (e) {
+      runtimeLog(`Visual C++ could not be installed (${e.message}); you can retry from Bottles → Components.`, 'warn');
+    }
+  }
+  store.get().settings.setupDone = true;
+  store.save();
+  p(1, 'All set');
+}));
+handle('engine:list', () => engine.detectAll());
+handle('engine:use', async (p) => {
+  const eng = await engine.detect(p);
+  if (!eng) throw new Error('That engine is no longer available');
+  store.get().settings.enginePath = p;
   store.save();
   runtime.setEngine(eng);
   return eng;

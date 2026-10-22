@@ -2,6 +2,9 @@
 
 **Run Windows apps and games on your Mac.** Umbra is a CrossOver-style launcher with a dark UI. It runs Windows programs on macOS through [Wine](https://www.winehq.org/), the open-source compatibility layer that CrossOver is also built on.
 
+- **One-click setup**: a single "Set up everything" button installs Rosetta, the Wine engine, a Windows 10 bottle and Visual C++.
+- **DirectX 12 via D3DMetal**: Umbra finds the Wine engines from Whisky or Apple's Game Porting Toolkit, and you can switch to one on the Engine page to run DirectX 12 games.
+- **Favorites**: star games to pin them to the top of your Library.
 - **Drop any `.exe`** (or `.msi` / `.bat`) onto the window to run it. You can also double-click one in Finder (Open With → Umbra).
 - **Installers just work**: run any `setup.exe` or `.msi` and the program installs into that bottle. When it finishes, Umbra adds the installed app to your Library automatically, named after its Start Menu shortcut.
 - **Components**: one-click Visual C++ 2015–2022, .NET Desktop Runtime 8, DirectX 9 extras and Wine Mono/Gecko per bottle, plus winetricks for anything else. This is the fix for most "app won't start" problems.
@@ -31,7 +34,7 @@
 1. Download the latest `.dmg` from **[Releases](../../releases)**: `arm64` for Apple Silicon, `x64` for Intel Macs.
 2. Drag **Umbra** into **Applications**.
 3. Umbra isn't notarized, so macOS blocks it the first time. Open it once, then go to **System Settings → Privacy & Security → Open Anyway**. You can also run `xattr -cr /Applications/Umbra.app` in Terminal instead.
-4. In Umbra, open **Engine** and click **Install Engine**. On Apple Silicon, also click **Install Rosetta**.
+4. In Umbra, click **Set up everything** on the Library page. It installs Rosetta (on Apple Silicon), the Wine engine, a Windows bottle and Visual C++.
 
 ## Compatibility
 
@@ -40,7 +43,7 @@ Wine runs a lot of software, but not all of it:
 | | |
 |---|---|
 | ✅ Works well | Most DirectX 9–11 games, indie games, older titles, many launchers and utilities |
-| ⚠️ Depends | DirectX 12 games need a Wine build with D3D12→Metal (e.g. Apple's Game Porting Toolkit). Choose it with **Engine → Use Custom Wine…** |
+| ⚠️ Depends | DirectX 12 games need D3DMetal. Install Whisky or Apple's Game Porting Toolkit, then pick its engine under **Engine → Engines on this Mac** |
 | ❌ Won't work | Games with kernel anti-cheat (Valorant, many competitive shooters) |
 
 ## Develop

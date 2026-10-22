@@ -432,7 +432,7 @@ function addApp({ bottleId, exe, name, args = '', steamAppId }) {
 function updateApp(id, patch) {
   const a = store.get().apps.find((x) => x.id === id);
   if (!a) throw new Error('App not found');
-  for (const k of ['name', 'args', 'bottleId', 'exe']) if (patch[k] !== undefined) a[k] = patch[k];
+  for (const k of ['name', 'args', 'bottleId', 'exe', 'favorite']) if (patch[k] !== undefined) a[k] = patch[k];
   store.save();
   return a;
 }
