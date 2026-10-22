@@ -15,10 +15,8 @@ const STEAM_SETUP_URL = 'https://cdn.akamai.steamstatic.com/client/installer/Ste
 const STEAM_CLIENT_CDN = 'https://cdn.steamstatic.com/client/';
 // Steam's built-in browser (sign-in, store, library) needs its sandbox and GPU
 // acceleration turned off to load under Wine.
-// -noverifyfiles keeps Steam from restoring its own steamwebhelper.exe over Umbra's
-// wrapper (see deployCefWrapper) when it checks its files at startup.
-const STEAM_ARGS = '-noverifyfiles -no-cef-sandbox -cef-disable-gpu -cef-disable-gpu-compositing';
-const OLD_STEAM_ARGS = ['-cef-disable-gpu -cef-disable-sandbox', '-no-cef-sandbox -cef-disable-gpu -cef-disable-gpu-compositing'];
+const STEAM_ARGS = '-no-cef-sandbox -cef-disable-gpu -cef-disable-gpu-compositing';
+const OLD_STEAM_ARGS = ['-cef-disable-gpu -cef-disable-sandbox', '-noverifyfiles -no-cef-sandbox -cef-disable-gpu -cef-disable-gpu-compositing'];
 const SKIP_EXE = /(unins|uninstall|setup|install|update|crash|report|helper|redist|vcredist|dxsetup|dotnet|directx|notification|service|webhelper|^7z\.exe$|^winver|^cef)/i;
 const INSTALLER = /(setup|install|^inst[_-]|_inst\b)/i;
 const SKIP_DIR = /^(windows|common files|internet explorer|windows media player|windows nt|windowspowershell|microsoft\.net)$/i;
@@ -309,8 +307,15 @@ function launch({ bottleId, file, args = '', appId = null, name, steamAttempt = 
   const before = installer ? snapshot(b.id) : null;
   const appEntry = appId && store.get().apps.find((x) => x.id === appId);
   const isSteamExe = /^steam\.exe$/i.test(path.basename(file));
-  // Steam needs -noverifyfiles for its browser fix; Library entries made before it get it too.
-  if (isSteamExe && !/-noverifyfiles/i.test(args)) args = `-noverifyfiles ${args}`.trim();
+  const wrapped = isSteamExe && deployCefWrapper(path.dirname(file));
+  if (isSteamExe) {
+    // -noverifyfiles keeps Steam's startup file check from putting its own
+    // steamwebhelper.exe back over the wrapper. Only once Steam is fully installed:
+    // on a fresh install it stops Steam finishing ("Failed to load steamui.dll").
+    args = args.replace(/(^|\s)-noverifyfiles(?=\s|$)/gi, ' ').trim();
+    if (wrapped && fs.existsSync(path.join(path.dirname(file), 'steamui.dll'))) args = `-noverifyfiles ${args}`.trim();
+  }
+  const steamReady = isSteamExe && /-noverifyfiles/.test(args);
   const child = spawn(bin, [...argsFor(file), ...splitArgs(args)], { env: wineEnv(b, appEntry?.hud ? { MTL_HUD_ENABLED: '1' } : {}), cwd: path.dirname(file) });
   const entry = { runId, appId, bottleId, name: label, started: Date.now(), pid: child.pid, exe: file };
   running.set(runId, { ...entry, child });
@@ -347,8 +352,7 @@ function launch({ bottleId, file, args = '', appId = null, name, steamAttempt = 
   child.on('error', (e) => { log(`${label}: ${e.message}`, 'error'); done(-1); });
   // A second click while Steam is already open just hands off to it; nothing to watch then.
   const steamOpen = [...running.values()].some((r) => r.runId !== runId && r.bottleId === bottleId && /steam\.exe$/i.test(r.exe || ''));
-  const wrapped = isSteamExe && deployCefWrapper(path.dirname(file));
-  if (isSteamExe && !steamOpen) watchSteam(runId, { bottleId, file, args, appId, name, wrapped }, steamAttempt);
+  if (isSteamExe && !steamOpen) watchSteam(runId, { bottleId, file, args, appId, name, steamReady }, steamAttempt);
   if (/^steam\.exe$/i.test(path.basename(file))) startWindowFix(b);
   emit('running');
   return entry;
@@ -427,9 +431,10 @@ function watchSteam(runId, opts, attempt) {
     const p = steamProgress(logs, from, t0);
     if (p.clientUp) {
       clearInterval(timer);
-      // A first start installs Steam's browser after Umbra launched it, so the wrapper
-      // wasn't in place yet and the window would be black: put it in and restart once.
-      if (!opts.wrapped && deployCefWrapper(path.dirname(opts.file))) {
+      // On a first start Steam installs (or, without -noverifyfiles, restores) its browser
+      // after Umbra launched it, so the wrapper isn't in use and the window would be black:
+      // put it back and restart once, now with -noverifyfiles.
+      if (!opts.steamReady && deployCefWrapper(path.dirname(opts.file)) && fs.existsSync(path.join(path.dirname(opts.file), 'steamui.dll'))) {
         log('Restarting Steam once so its window draws properly…');
         kill(opts.bottleId)
           .then(() => new Promise((r) => setTimeout(r, 2000)))
@@ -457,7 +462,8 @@ function watchSteam(runId, opts, attempt) {
     // steamui.dll", often from an interrupted update); a restart alone brings the same
     // files back, so make Steam reinstall them.
     // Only when steam.exe itself died: a slow but running Steam is left to finish.
-    const reinstall = !reopenStuck && !alive;
+    // A Steam stuck on "Failed to load steamui.dll" stays open, so check for the file too.
+    const reinstall = !reopenStuck && (!alive || !fs.existsSync(path.join(path.dirname(opts.file), 'steamui.dll')));
     log(reopenStuck ? 'Steam finished updating but didn’t reopen. Restarting it…'
       : reinstall ? 'Steam didn’t open. Reinstalling its client files and starting it again…'
         : 'Restarting Steam…', 'warn');
