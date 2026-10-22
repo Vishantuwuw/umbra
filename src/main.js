@@ -7,8 +7,8 @@ const components = require('./components');
 
 const RENDERER = path.join(__dirname, 'renderer');
 const MIN_SPLASH_MS = 2600;
-const REPO_URL = 'https://github.com/Vishantuwuw/umbra';
-const LATEST_API = 'https://api.github.com/repos/Vishantuwuw/umbra/releases/latest';
+const REPO_URL = 'https://github.com/coldvini/umbra';
+const LATEST_API = 'https://api.github.com/repos/coldvini/umbra/releases/latest';
 
 let splash = null;
 let main = null;

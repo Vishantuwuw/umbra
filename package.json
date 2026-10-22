@@ -1,10 +1,10 @@
 {
   "name": "umbra",
   "productName": "Umbra",
-  "version": "1.3.1",
+  "version": "1.3.2",
   "description": "Run Windows apps and games on your Mac.",
   "main": "src/main.js",
-  "author": "Umbra",
+  "author": "Vini (coldvini)",
   "license": "MIT",
   "scripts": {
     "start": "electron .",

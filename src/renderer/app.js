@@ -349,7 +349,7 @@ function viewEngine() {
   </div>
   <div class="card engine-card credits">
     <h3>Credits</h3>
-    <div class="credit-hero"><div class="mark"><i></i></div><div><b>Umbra v${esc(S.version)}</b><span>Made by Vini</span></div></div>
+    <div class="credit-hero"><div class="mark"><i></i></div><div><b>Umbra v${esc(S.version)}</b><span>Made by Vini</span> <button class="credit-link" data-act="open-url" data-url="https://github.com/coldvini">@coldvini</button></div></div>
     <p class="muted">Umbra stands on the shoulders of these open-source projects:</p>
     <ul class="credit-list">
       ${CREDITS.map(([name, what, url]) => `<li><button class="credit-link" data-act="open-url" data-url="${url}">${esc(name)}</button><span>${esc(what)}</span></li>`).join('')}

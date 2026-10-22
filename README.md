@@ -74,7 +74,7 @@ Umbra data lives in `~/Library/Application Support/Umbra` (bottles, engine, libr
 
 ## Credits
 
-**Made by Vini.**
+**Made by Vini** ([@coldvini](https://github.com/coldvini)).
 
 Umbra is built on these open-source projects:
 
