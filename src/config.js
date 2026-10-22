@@ -11,7 +11,6 @@ module.exports = {
   supabaseAnonKey: process.env.UMBRA_SUPABASE_ANON_KEY || local.supabaseAnonKey || 'sb_publishable_qpts0fpi9T-_PBwOWkSZBA_Dd_FBAcH',
   // Sign-in buttons, in order. Each must also be enabled under Authentication → Providers
   // (Supabase also supports apple, twitch, twitter, gitlab, slack, spotify and more).
-  // Only providers already set up in the Supabase project; a button for one that isn't
-  // fails with "provider is not enabled". Add 'discord', 'github', 'google' as they're ready.
-  providers: (local.providers || []),
+  // Buttons only show for the ones switched on under Authentication → Providers.
+  providers: (local.providers || ['google', 'discord', 'github', 'apple', 'twitch']),
 };

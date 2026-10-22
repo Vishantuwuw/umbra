@@ -306,7 +306,6 @@ document.addEventListener('DOMContentLoaded', () => Object.assign(actions, {
   'admin-user-menu': (el) => {
     const u = adminUser(el.dataset.id);
     menu(el, [
-      { icon: 'shield', label: u.role === 'admin' ? 'Remove admin' : 'Make admin', run: async () => { await call('admin:role', u.id, u.role === 'admin' ? 'user' : 'admin'); toast('Role updated'); loadAdmin(); } },
       { icon: 'chip', label: 'Ban all their devices…', danger: true, run: () => banModal({
         title: `Ban ${u.name || u.email}’s devices`,
         text: `Bans the account and all ${u.devices.length} device(s) it used.`,

@@ -49,15 +49,17 @@ To run it locally instead, set `UMBRA_SUPABASE_URL` and `UMBRA_SUPABASE_ANON_KEY
 
 ## 5. Your admin account
 
-Only `vishantnagrani@gmail.com` is an admin. It's listed in `schema.sql` (the `admin_emails` table), and it only becomes an admin once that email address is confirmed. The password is never stored in the app. Supabase keeps it.
+There is exactly one admin, `vishantnagrani55@gmail.com`, and nothing in the app can make anyone else an admin. That account only sees the **Admin** page when it signs in with its **email and password** after confirming the address. Signing in to the same address through Google, Discord or GitHub doesn't count. The password is stored only by Supabase, never in the app.
 
-1. Open Umbra, choose **Create an account**, and sign up with `vishantnagrani@gmail.com` and your password.
-2. Supabase emails a confirmation link to that address. This needs **Confirm email** on, which is the default. Open the email on your Mac and click the link. Umbra opens and signs you in.
-3. The **Admin** tab appears in the sidebar. Nobody else sees it.
+1. Run the latest [`supabase/schema.sql`](supabase/schema.sql) in the SQL Editor. Running it again is safe and removes any admin setup from older versions.
+2. Open Umbra, choose **Create an account**, and sign up with `vishantnagrani55@gmail.com` and your password.
+3. Supabase emails a confirmation link to that address. Click it on your Mac and Umbra signs you in. The **Admin** tab appears in the sidebar.
 
-To add more admins, use **Make admin** in the Admin tab, or add their email to `admin_emails`.
+Everyone who signs up with email gets a confirmation link before they can sign in. That's Supabase's **Confirm email** setting under Authentication → Sign In / Providers → Email, and it's on by default. Supabase's built-in mailer only sends a few emails per hour. For more, add your own email service under Authentication → Emails → SMTP Settings.
 
-Everyone who signs up with email gets the same kind of confirmation link before they can sign in.
+## 6. Turning on Google, Discord or GitHub
+
+Umbra shows a button for each provider that's switched on in **Authentication → Sign In / Providers**. Turn one on there (Part 3 above) and its button appears the next time Umbra opens. You don't need a new build.
 
 ## How bans work
 

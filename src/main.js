@@ -498,7 +498,6 @@ handle('auth:sign-out', async () => {
 handle('admin:list', () => auth.adminList());
 handle('admin:hwid', (hwid, banned, reason) => auth.adminHwidBan(hwid, banned, reason));
 handle('admin:user', (id, banned, reason, devices) => auth.adminUserBan(id, banned, reason, devices));
-handle('admin:role', (id, role) => auth.adminRole(id, role));
 
 app.whenReady().then(() => {
   if (process.platform === 'darwin') {

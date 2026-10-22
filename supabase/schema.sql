@@ -1,8 +1,8 @@
 -- Umbra accounts, devices and bans.
 -- Run this once in your Supabase project: Dashboard → SQL Editor → paste → Run.
--- Accounts whose email is listed in admin_emails (below) become admins once the
--- email is confirmed. To add another admin later, either use the Admin tab in Umbra or:
---   update public.profiles set role = 'admin' where email = 'someone@example.com';
+-- There is exactly one admin: the account in admin_email() below, signed in with its
+-- email and password (not Google/Discord/GitHub), once that email is confirmed.
+-- Re-running this file is safe and removes anything left over from older versions.
 
 -- ---------- tables ----------
 create table if not exists public.profiles (
@@ -36,11 +36,6 @@ create table if not exists public.hwid_bans (
   created_at timestamptz not null default now()
 );
 
--- Emails that are made admin automatically (only once the address is confirmed).
-create table if not exists public.admin_emails (email text primary key);
-insert into public.admin_emails (email) values ('vishantnagrani@gmail.com') on conflict do nothing;
-alter table public.admin_emails enable row level security;
-
 -- Everything goes through the functions below; clients only read their own profile.
 alter table public.profiles enable row level security;
 alter table public.devices enable row level security;
@@ -52,16 +47,14 @@ create policy "read own profile" on public.profiles for select using (auth.uid()
 create or replace function public.handle_new_user()
 returns trigger language plpgsql security definer set search_path = public as $$
 begin
-  insert into public.profiles (id, email, display_name, avatar_url, provider, role)
+  insert into public.profiles (id, email, display_name, avatar_url, provider)
   values (
     new.id,
     new.email,
     coalesce(new.raw_user_meta_data->>'full_name', new.raw_user_meta_data->>'name',
              new.raw_user_meta_data->>'user_name', split_part(new.email, '@', 1)),
     coalesce(new.raw_user_meta_data->>'avatar_url', new.raw_user_meta_data->>'picture'),
-    coalesce(new.raw_app_meta_data->>'provider', 'email'),
-    case when new.email_confirmed_at is not null
-      and exists (select 1 from public.admin_emails a where lower(a.email) = lower(new.email)) then 'admin' else 'user' end
+    coalesce(new.raw_app_meta_data->>'provider', 'email')
   )
   on conflict (id) do nothing;
   return new;
@@ -71,31 +64,28 @@ drop trigger if exists on_auth_user_created on auth.users;
 create trigger on_auth_user_created after insert on auth.users
   for each row execute function public.handle_new_user();
 
--- Listed admin emails get the role when the address is confirmed after sign-up.
-create or replace function public.handle_user_confirmed()
-returns trigger language plpgsql security definer set search_path = public as $$
-begin
-  if new.email_confirmed_at is not null
-    and exists (select 1 from public.admin_emails a where lower(a.email) = lower(new.email)) then
-    update public.profiles set role = 'admin' where id = new.id;
-  end if;
-  return new;
-end $$;
-
+-- Leftovers from older versions of this file.
 drop trigger if exists on_auth_user_confirmed on auth.users;
-create trigger on_auth_user_confirmed after update of email_confirmed_at on auth.users
-  for each row execute function public.handle_user_confirmed();
-
--- Accounts that already exist when this file is (re)run.
-update public.profiles p set role = 'admin'
-from auth.users u
-where u.id = p.id and u.email_confirmed_at is not null
-  and exists (select 1 from public.admin_emails a where lower(a.email) = lower(u.email));
+drop function if exists public.handle_user_confirmed();
+drop function if exists public.admin_set_role(uuid, text);
+drop table if exists public.admin_emails;
+update public.profiles set role = 'user' where role <> 'user';
 
 -- ---------- helpers ----------
+create or replace function public.admin_email()
+returns text language sql immutable as $$ select 'vishantnagrani55@gmail.com'::text $$;
+
+-- The admin account, signed in with its password (or its own confirmation/reset email
+-- link) rather than through Google, Discord or GitHub.
 create or replace function public.is_admin()
 returns boolean language sql stable security definer set search_path = public as $$
-  select exists (select 1 from profiles where id = auth.uid() and role = 'admin' and not banned);
+  select exists (
+      select 1 from auth.users u
+      where u.id = auth.uid() and lower(u.email) = admin_email() and u.email_confirmed_at is not null)
+    and exists (select 1 from jsonb_array_elements(coalesce(auth.jwt()->'amr', '[]'::jsonb)) a
+                where a->>'method' in ('password', 'otp', 'email/signup', 'recovery', 'magiclink'))
+    and not exists (select 1 from jsonb_array_elements(coalesce(auth.jwt()->'amr', '[]'::jsonb)) a
+                    where a->>'method' = 'oauth');
 $$;
 
 -- Checked before sign-in, so a banned machine can't even create an account.
@@ -120,7 +110,7 @@ begin
   update profiles set last_seen = now() where id = auth.uid() returning * into me;
   select * into hb from hwid_bans where hwid = p_hwid;
   return json_build_object(
-    'role', coalesce(me.role, 'user'),
+    'role', case when is_admin() then 'admin' else 'user' end,
     'banned', coalesce(me.banned, false) or hb.hwid is not null,
     'reason', coalesce(case when me.banned then me.ban_reason end, hb.reason)
   );
@@ -135,7 +125,7 @@ begin
     'users', coalesce((
       select json_agg(json_build_object(
         'id', p.id, 'email', p.email, 'name', p.display_name, 'avatar', p.avatar_url,
-        'provider', p.provider, 'role', p.role, 'banned', p.banned, 'reason', p.ban_reason,
+        'provider', p.provider, 'role', case when lower(p.email) = admin_email() then 'admin' else 'user' end, 'banned', p.banned, 'reason', p.ban_reason,
         'created', p.created_at, 'lastSeen', p.last_seen,
         'devices', coalesce((
           select json_agg(json_build_object(
@@ -156,7 +146,7 @@ returns void language plpgsql security definer set search_path = public as $$
 begin
   if not is_admin() then raise exception 'Admins only'; end if;
   if p_banned then
-    if exists (select 1 from devices d join profiles p on p.id = d.user_id where d.hwid = p_hwid and p.role = 'admin') then
+    if exists (select 1 from devices d join profiles p on p.id = d.user_id where d.hwid = p_hwid and lower(p.email) = admin_email()) then
       raise exception 'That device is used by an admin and can''t be banned';
     end if;
     insert into hwid_bans (hwid, reason, banned_by) values (p_hwid, p_reason, auth.uid())
@@ -178,20 +168,12 @@ begin
       insert into hwid_bans (hwid, reason, banned_by)
       select hwid, p_reason, auth.uid() from devices where user_id = p_user
         -- Never lock out an admin who once signed in on the same Mac.
-        and hwid not in (select d.hwid from devices d join profiles p on p.id = d.user_id where p.role = 'admin')
+        and hwid not in (select d.hwid from devices d join profiles p on p.id = d.user_id where lower(p.email) = admin_email())
       on conflict (hwid) do nothing;
     else
       delete from hwid_bans where hwid in (select hwid from devices where user_id = p_user);
     end if;
   end if;
-end $$;
-
-create or replace function public.admin_set_role(p_user uuid, p_role text)
-returns void language plpgsql security definer set search_path = public as $$
-begin
-  if not is_admin() then raise exception 'Admins only'; end if;
-  if p_user = auth.uid() then raise exception 'You can''t change your own role'; end if;
-  update profiles set role = p_role where id = p_user;
 end $$;
 
 -- ---------- who may call what ----------
@@ -200,13 +182,11 @@ revoke all on function public.register_device(text, text, text) from public;
 revoke all on function public.admin_list_users() from public;
 revoke all on function public.admin_set_hwid_ban(text, boolean, text) from public;
 revoke all on function public.admin_set_user_ban(uuid, boolean, text, boolean) from public;
-revoke all on function public.admin_set_role(uuid, text) from public;
 revoke all on function public.is_admin() from public;
-revoke all on function public.handle_user_confirmed() from public;
 grant execute on function public.hwid_status(text) to anon, authenticated;
 grant execute on function public.register_device(text, text, text) to authenticated;
 grant execute on function public.admin_list_users() to authenticated;
 grant execute on function public.admin_set_hwid_ban(text, boolean, text) to authenticated;
 grant execute on function public.admin_set_user_ban(uuid, boolean, text, boolean) to authenticated;
-grant execute on function public.admin_set_role(uuid, text) to authenticated;
 grant execute on function public.is_admin() to authenticated;
+revoke all on function public.admin_email() from public;

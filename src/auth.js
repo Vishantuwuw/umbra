@@ -24,5 +24,4 @@ module.exports = {
   adminList: impl.adminList || needsCloud,
   adminHwidBan: impl.adminHwidBan || needsCloud,
   adminUserBan: impl.adminUserBan || needsCloud,
-  adminRole: impl.adminRole || needsCloud,
 };

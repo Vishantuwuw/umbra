@@ -23,6 +23,7 @@ let deviceBan = null; // { reason } when this machine is banned (checked before 
 let pending = null; // OAuth provider waiting for the browser
 let recovery = false; // signed in from a password-reset link; must set a new password
 let ready = false;
+let providers = []; // sign-in buttons: config.providers that are switched on in Supabase
 let error = null;
 let queuedUrl = null;
 let timer = null;
@@ -105,7 +106,7 @@ function state() {
     recovery,
     error,
     deviceId: hwid ? hwid.slice(0, 12) : null,
-    providers: config.providers,
+    providers,
   };
 }
 
@@ -166,12 +167,26 @@ async function init(onChange) {
   return state();
 }
 
+// Asks Supabase which sign-in providers are switched on, so turning one on in the
+// dashboard is all it takes for its button to appear.
+async function enabledProviders() {
+  try {
+    const res = await fetch(`${config.supabaseUrl}/auth/v1/settings`, { headers: { apikey: config.supabaseAnonKey } });
+    const on = (await res.json()).external || {};
+    return config.providers.filter((p) => on[p]);
+  } catch (e) {
+    console.warn('Umbra: could not read sign-in providers:', e.message);
+    return [];
+  }
+}
+
 async function start() {
   const { createClient } = require('@supabase/supabase-js');
   client = createClient(config.supabaseUrl, config.supabaseAnonKey, {
     auth: { flowType: 'pkce', storage, persistSession: true, autoRefreshToken: true, detectSessionInUrl: false },
   });
   hwid = await hardwareId();
+  providers = await enabledProviders();
   try {
     const saved = JSON.parse(storage.getItem('umbra.check') || 'null');
     if (saved) check = saved;
@@ -184,7 +199,8 @@ async function start() {
     session = s;
     if (event === 'PASSWORD_RECOVERY') recovery = true;
     if (event === 'SIGNED_OUT') { check = null; recovery = false; storage.removeItem('umbra.check'); }
-    if (s && s.user.id !== before) { pending = null; check = null; setImmediate(refresh); }
+    // A fresh sign-in can change admin rights (password vs Google), so re-check then too.
+    if (s && (s.user.id !== before || event === 'SIGNED_IN')) { pending = null; check = null; setImmediate(refresh); }
     changed();
   });
   await checkDevice();
@@ -241,7 +257,7 @@ async function signUpEmail(email, password, name) {
 async function signInProvider(provider) {
   need();
   if (deviceBan) throw new Error('This device is banned from Umbra');
-  if (!config.providers.includes(provider)) throw new Error(`Unknown sign-in provider ${provider}`);
+  if (!providers.includes(provider)) throw new Error(`Unknown sign-in provider ${provider}`);
   const { data, error: e } = await client.auth.signInWithOAuth({ provider, options: { redirectTo: REDIRECT, skipBrowserRedirect: true } });
   fail(e);
   pending = provider;
@@ -291,10 +307,9 @@ async function admin(fn, args) {
 const adminList = () => admin('admin_list_users', {});
 const adminHwidBan = (h, banned, reason) => admin('admin_set_hwid_ban', { p_hwid: String(h).trim().toLowerCase(), p_banned: banned, p_reason: reason || null });
 const adminUserBan = (id, banned, reason, devices) => admin('admin_set_user_ban', { p_user: id, p_banned: banned, p_reason: reason || null, p_devices: Boolean(devices) });
-const adminRole = (id, role) => admin('admin_set_role', { p_user: id, p_role: role === 'admin' ? 'admin' : 'user' });
 
 module.exports = {
   REDIRECT, configured, init, state, locked, handleUrl, refresh, retry,
   signInEmail, signUpEmail, signInProvider, cancelPending, resetPassword, setPassword, signOut,
-  adminList, adminHwidBan, adminUserBan, adminRole, hardwareId,
+  adminList, adminHwidBan, adminUserBan, hardwareId,
 };
