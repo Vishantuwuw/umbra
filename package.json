@@ -1,0 +1,63 @@
+{
+  "name": "umbra",
+  "productName": "Umbra",
+  "version": "1.0.0",
+  "description": "Run Windows apps and games on your Mac.",
+  "main": "src/main.js",
+  "author": "Umbra",
+  "license": "MIT",
+  "scripts": {
+    "start": "electron .",
+    "dist:mac": "electron-builder --mac dmg zip --arm64 --x64 --publish never",
+    "dist:mac-zip": "electron-builder --mac zip --arm64 --x64 --publish never"
+  },
+  "dependencies": {
+    "@fontsource-variable/inter": "5.2.5"
+  },
+  "devDependencies": {
+    "electron": "43.0.0",
+    "electron-builder": "26.16.1"
+  },
+  "build": {
+    "appId": "app.umbra.launcher",
+    "productName": "Umbra",
+    "copyright": "Umbra",
+    "artifactName": "${productName}-${version}-${arch}.${ext}",
+    "directories": {
+      "buildResources": "build",
+      "output": "dist"
+    },
+    "files": [
+      "src/**/*",
+      "package.json"
+    ],
+    "afterPack": "build/afterPack.js",
+    "fileAssociations": [
+      {
+        "ext": ["exe", "msi", "bat"],
+        "name": "Windows Program",
+        "role": "Viewer",
+        "rank": "Alternate"
+      }
+    ],
+    "mac": {
+      "category": "public.app-category.games",
+      "icon": "build/icon.png",
+      "identity": null,
+      "hardenedRuntime": false,
+      "darkModeSupport": true,
+      "target": [
+        { "target": "dmg", "arch": ["arm64", "x64"] },
+        { "target": "zip", "arch": ["arm64", "x64"] }
+      ]
+    },
+    "dmg": {
+      "title": "Umbra",
+      "backgroundColor": "#000000",
+      "contents": [
+        { "x": 150, "y": 190 },
+        { "x": 390, "y": 190, "type": "link", "path": "/Applications" }
+      ]
+    }
+  }
+}

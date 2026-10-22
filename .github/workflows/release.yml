@@ -1,0 +1,92 @@
+name: Build & Release
+
+on:
+  push:
+    branches: [main]
+    tags: ['v*']
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  smoke:
+    name: Run a Windows .exe on macOS
+    runs-on: macos-latest
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - name: Ensure Rosetta 2
+        run: sudo softwareupdate --install-rosetta --agree-to-license || true
+      - name: Engine + bottle + hello.exe
+        env:
+          UMBRA_HOME: ${{ runner.temp }}/umbra-home
+          SHOTS_DIR: ${{ runner.temp }}
+        run: npx electron test/smoke.js
+      - name: Screenshot the app UI
+        env:
+          UMBRA_HOME: ${{ runner.temp }}/umbra-home
+        run: |
+          npx electron . &
+          sleep 1.4 && screencapture -x "$RUNNER_TEMP/mac-splash.png"
+          sleep 9 && screencapture -x "$RUNNER_TEMP/mac-library.png"
+          pkill -f electron || true
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: mac-screenshots
+          path: ${{ runner.temp }}/*.png
+
+  build:
+    name: Build Umbra.app
+    needs: smoke
+    runs-on: macos-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: npm run dist:mac
+        env:
+          CSC_IDENTITY_AUTO_DISCOVERY: false
+      - name: Verify bundle
+        run: |
+          for app in dist/mac*/Umbra.app; do
+            codesign --verify --deep "$app" && echo "signature ok: $app"
+            plutil -p "$app/Contents/Info.plist" | grep -E 'CFBundleIdentifier|CFBundleShortVersionString'
+          done
+      - uses: actions/upload-artifact@v4
+        with:
+          name: Umbra-mac
+          path: |
+            dist/*.dmg
+            dist/*.zip
+      - name: Publish release
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: softprops/action-gh-release@v2
+        with:
+          name: Umbra ${{ github.ref_name }}
+          files: |
+            dist/*.dmg
+            dist/*.zip
+          body: |
+            ## Download
+            - **Apple Silicon (M1/M2/M3/M4)** → `Umbra-*-arm64.dmg`
+            - **Intel Mac** → `Umbra-*-x64.dmg`
+
+            ## First launch
+            Umbra isn't notarized by Apple, so macOS will block it the first time:
+            1. Drag **Umbra** into **Applications**.
+            2. Open it once, then go to **System Settings → Privacy & Security** and click **Open Anyway**.
+               (Or run `xattr -cr /Applications/Umbra.app` in Terminal.)
+            3. In Umbra, open **Engine → Install Engine** (and **Install Rosetta** on Apple Silicon).
+
+            Then drop any `.exe` onto the window, or go to **Steam → Install Steam for Windows**.
