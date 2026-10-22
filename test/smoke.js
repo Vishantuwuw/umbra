@@ -105,18 +105,18 @@ app.whenReady().then(async () => {
       console.log('PASS: Steam installed ->', steamApp.exe, 'args:', steamApp.args);
       const sr = runtime.runApp(steamApp.id);
       // Steam's first launch downloads and installs a large update before sign-in appears,
-      // so wait (up to 15 min) for the sign-in window, then watch it for 3 more minutes.
+      // so wait (up to 25 min) for the sign-in window, then watch it for 3 more minutes.
       const logDir = path.join(path.dirname(steamApp.exe), 'logs');
       const has = (f, re) => { try { return re.test(require('fs').readFileSync(path.join(logDir, f), 'utf8')); } catch { return false; } };
       const t0 = Date.now();
       let signInAt = 0;
-      for (let i = 1; Date.now() - t0 < 15 * 60000; i++) {
+      for (let i = 1; Date.now() - t0 < 25 * 60000; i++) {
         await sleep(30000);
         if (!signInAt && has('webhelper.txt', /DesktopLoginWindow/)) { signInAt = Date.now(); console.log(`Steam sign-in window appeared after ${Math.round((signInAt - t0) / 1000)}s`); }
         if (i % 3 === 0 || signInAt) { try { execFileSync('/usr/sbin/screencapture', ['-x', path.join(shots, `mac-steam-${String(Math.round((Date.now() - t0) / 1000)).padStart(4, '0')}s.png`)]); } catch {} }
         if (signInAt && Date.now() - signInAt > 180000) break;
       }
-      if (!signInAt) console.log('Steam sign-in window never appeared within 15 min');
+      if (!signInAt) console.log('Steam sign-in window never appeared within 25 min');
       const logs = path.join(path.dirname(steamApp.exe), 'logs');
       for (const f of ['bootstrap_log.txt', 'connection_log.txt', 'webhelper.txt', 'cef_log.txt', 'stderr.txt']) {
         try {

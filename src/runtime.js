@@ -351,7 +351,7 @@ function launch({ bottleId, file, args = '', appId = null, name, steamAttempt = 
 // on "Cleaning up…" after it says it is relaunching Steam. Watch its log until the real
 // client starts, and restart Steam (at most three times) when it gets stuck. Steam's
 // updater also sometimes exits after "launching Steam…" without the new client starting.
-const STEAM_STALL_MS = 12 * 60 * 1000;
+const STEAM_STALL_MS = 5 * 60 * 1000;
 const STEAM_RELAUNCH_MS = 45 * 1000;
 
 function steamProgress(logs, from, since) {
