@@ -36,7 +36,7 @@ npm run dist:mac        # build Umbra .dmg + .zip (on a Mac)
 npx electron test/smoke.js   # end-to-end: engine → bottle → run test/hello.exe
 ```
 
-Each push to `main` runs a GitHub Actions job on a real Mac. That job installs the Wine engine, creates a bottle and runs `test/hello.exe`, then builds the app. Pushing a `v*` tag publishes a release with the `.dmg` and `.zip` files.
+Each push to `main` runs a GitHub Actions job on a real Mac. That job installs the Wine engine, creates a bottle and runs `test/hello.exe`, then builds the app and publishes the `.dmg` and `.zip` files as release `v<version>`, using the version in `package.json`.
 
 ## How it works
 
