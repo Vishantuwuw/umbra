@@ -62,7 +62,9 @@ npm run dist:mac        # build Umbra .dmg + .zip (on a Mac)
 npx electron test/smoke.js   # end-to-end: engine → bottle → installer → run installed app
 ```
 
-Each push to `main` runs a GitHub Actions job on a real Mac. That job installs the Wine engine, creates a bottle, runs a test installer (`test/hello-setup.exe`), checks the installed app was added to the Library and runs it, then builds the app and publishes the `.dmg` and `.zip` files as release `v<version>`, using the version in `package.json`.
+This is the private source repo. Each push to `main` runs a GitHub Actions job on a real Mac. That job installs the Wine engine, creates a bottle, runs a test installer (`test/hello-setup.exe`), checks the installed app was added to the Library and runs it. It then builds the app and publishes the `.dmg` and `.zip` files as release `v<version>` to the public, code-free repo [coldvini/umbra](https://github.com/coldvini/umbra), using the version in `package.json`. That repo shows only `public/README.md` and the newest release.
+
+Publishing needs a repository secret named `PUBLIC_REPO_TOKEN`: a fine-grained token with **Contents: Read and write** on `coldvini/umbra`. To change the public page, edit `public/README.md` and copy it there.
 
 ## How it works
 

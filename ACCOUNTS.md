@@ -39,7 +39,7 @@ To change which buttons Umbra shows, add a repository **variable** named `UMBRA_
 ## 4. Connect release builds to the project
 
 1. In Supabase, open **Project Settings → API** and copy the **Project URL** and the **anon / publishable key**. The anon key is safe to ship inside the app. The database rules in `schema.sql` decide who can do what.
-2. In this GitHub repo, open **Settings → Secrets and variables → Actions** and add two **repository secrets**:
+2. In this private source repo (`umbra-source`), open **Settings → Secrets and variables → Actions** and add two **repository secrets**:
    - `UMBRA_SUPABASE_URL`: the Project URL.
    - `UMBRA_SUPABASE_ANON_KEY`: the anon / publishable key.
 
@@ -47,16 +47,15 @@ From the next release on, Umbra requires sign-in.
 
 To run it locally instead, set `UMBRA_SUPABASE_URL` and `UMBRA_SUPABASE_ANON_KEY` before `npm start`.
 
-## 5. Make yourself an admin
+## 5. Your admin account
 
-1. Sign in to Umbra once.
-2. In Supabase **SQL Editor**, run this with your own email:
+`vishantadmin@gmail.com` is listed as an admin in `schema.sql` (the `admin_emails` table). It becomes an admin as soon as its email address is confirmed. The password is stored only by Supabase, never in the app.
 
-   ```sql
-   update public.profiles set role = 'admin' where email = 'you@example.com';
-   ```
+1. In Supabase, open **Authentication → Users → Add user → Create new user**.
+2. Enter the email and your password, and tick **Auto Confirm User**.
+3. Sign in to Umbra with that email and password. The **Admin** tab shows up in the sidebar.
 
-3. Restart Umbra. An **Admin** tab appears in the sidebar. You can also promote other admins from there.
+To add more admins, use **Make admin** in the Admin tab, or add their email to `admin_emails`.
 
 ## How bans work
 

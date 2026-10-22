@@ -1,7 +1,8 @@
 -- Umbra accounts, devices and bans.
 -- Run this once in your Supabase project: Dashboard → SQL Editor → paste → Run.
--- Then make yourself an admin (replace the email):
---   update public.profiles set role = 'admin' where email = 'you@example.com';
+-- Accounts whose email is listed in admin_emails (below) become admins once the
+-- email is confirmed. To add another admin later, either use the Admin tab in Umbra or:
+--   update public.profiles set role = 'admin' where email = 'someone@example.com';
 
 -- ---------- tables ----------
 create table if not exists public.profiles (
@@ -35,6 +36,11 @@ create table if not exists public.hwid_bans (
   created_at timestamptz not null default now()
 );
 
+-- Emails that are made admin automatically (only once the address is confirmed).
+create table if not exists public.admin_emails (email text primary key);
+insert into public.admin_emails (email) values ('vishantadmin@gmail.com') on conflict do nothing;
+alter table public.admin_emails enable row level security;
+
 -- Everything goes through the functions below; clients only read their own profile.
 alter table public.profiles enable row level security;
 alter table public.devices enable row level security;
@@ -46,14 +52,16 @@ create policy "read own profile" on public.profiles for select using (auth.uid()
 create or replace function public.handle_new_user()
 returns trigger language plpgsql security definer set search_path = public as $$
 begin
-  insert into public.profiles (id, email, display_name, avatar_url, provider)
+  insert into public.profiles (id, email, display_name, avatar_url, provider, role)
   values (
     new.id,
     new.email,
     coalesce(new.raw_user_meta_data->>'full_name', new.raw_user_meta_data->>'name',
              new.raw_user_meta_data->>'user_name', split_part(new.email, '@', 1)),
     coalesce(new.raw_user_meta_data->>'avatar_url', new.raw_user_meta_data->>'picture'),
-    coalesce(new.raw_app_meta_data->>'provider', 'email')
+    coalesce(new.raw_app_meta_data->>'provider', 'email'),
+    case when new.email_confirmed_at is not null
+      and exists (select 1 from public.admin_emails a where lower(a.email) = lower(new.email)) then 'admin' else 'user' end
   )
   on conflict (id) do nothing;
   return new;
@@ -62,6 +70,27 @@ end $$;
 drop trigger if exists on_auth_user_created on auth.users;
 create trigger on_auth_user_created after insert on auth.users
   for each row execute function public.handle_new_user();
+
+-- Listed admin emails get the role when the address is confirmed after sign-up.
+create or replace function public.handle_user_confirmed()
+returns trigger language plpgsql security definer set search_path = public as $$
+begin
+  if new.email_confirmed_at is not null
+    and exists (select 1 from public.admin_emails a where lower(a.email) = lower(new.email)) then
+    update public.profiles set role = 'admin' where id = new.id;
+  end if;
+  return new;
+end $$;
+
+drop trigger if exists on_auth_user_confirmed on auth.users;
+create trigger on_auth_user_confirmed after update of email_confirmed_at on auth.users
+  for each row execute function public.handle_user_confirmed();
+
+-- Accounts that already exist when this file is (re)run.
+update public.profiles p set role = 'admin'
+from auth.users u
+where u.id = p.id and u.email_confirmed_at is not null
+  and exists (select 1 from public.admin_emails a where lower(a.email) = lower(u.email));
 
 -- ---------- helpers ----------
 create or replace function public.is_admin()
@@ -173,6 +202,7 @@ revoke all on function public.admin_set_hwid_ban(text, boolean, text) from publi
 revoke all on function public.admin_set_user_ban(uuid, boolean, text, boolean) from public;
 revoke all on function public.admin_set_role(uuid, text) from public;
 revoke all on function public.is_admin() from public;
+revoke all on function public.handle_user_confirmed() from public;
 grant execute on function public.hwid_status(text) to anon, authenticated;
 grant execute on function public.register_device(text, text, text) to authenticated;
 grant execute on function public.admin_list_users() to authenticated;
