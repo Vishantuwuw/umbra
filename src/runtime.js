@@ -1084,13 +1084,29 @@ function installSteam(onProgress) {
 // Steam won't start without the Visual C++ runtimes ("Steam needs Microsoft Visual C++…"),
 // and its sign-in and store pages use Wine's web engine (Gecko).
 const STEAM_NEEDS = ['vcrun', 'wineaddons'];
-const steamNeedsRuntimes = (bottleId) => STEAM_NEEDS.some((c) => !bottle(bottleId).components?.[c]);
+const STEAM_GFX = 1;
+const steamNeedsRuntimes = (bottleId) => STEAM_NEEDS.some((c) => !bottle(bottleId).components?.[c]) || bottle(bottleId).steamGfx !== STEAM_GFX;
+
+// Steam's sign-in and main windows draw through Direct3D 11. With DXVK on (Faster
+// graphics) they came up blank on the Mac test: Wine had the window on screen but nothing
+// was drawn. Steam's own processes always use Wine's built-in Direct3D instead.
+async function steamGraphics(b) {
+  for (const exe of ['steam.exe', 'steamwebhelper.exe']) {
+    const key = `HKCU\\Software\\Wine\\AppDefaults\\${exe}\\DllOverrides`;
+    for (const dll of ['d3d11', 'd3d10core', 'd3d10', 'd3d10_1', 'dxgi', 'd3d9']) {
+      await wineRun(b, ['reg', 'add', key, '/v', dll, '/d', 'builtin', '/f']);
+    }
+  }
+  b.steamGfx = STEAM_GFX;
+  store.save();
+}
 
 async function ensureSteamRuntimes(bottleId, onProgress = () => {}) {
   const missing = STEAM_NEEDS.filter((c) => !bottle(bottleId).components?.[c]);
   for (const [i, c] of missing.entries()) {
     await installComponent(bottleId, c, (f, l) => onProgress((i + (f ?? 0)) / missing.length, l));
   }
+  if (bottle(bottleId).steamGfx !== STEAM_GFX) await steamGraphics(bottle(bottleId));
 }
 
 async function doInstallSteam(onProgress) {
