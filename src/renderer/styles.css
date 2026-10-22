@@ -425,11 +425,8 @@ select.input { appearance: none; background-image: linear-gradient(45deg, transp
 .auth-links button { color: var(--muted); }
 .auth-links button:hover { color: var(--text); }
 .auth-links b { color: var(--violet-2); font-weight: 600; }
-.auth-id { font-size: 11.5px; margin: -8px 0 24px; }
-.eclipse.banned .corona { background: conic-gradient(from 0deg, #ef4444, #f97316, transparent 40%, #ef4444 70%, transparent 85%, #ef4444); }
-.eclipse.banned .ring { background: conic-gradient(from 90deg, rgba(255,255,255,.9), rgba(248,113,113,.7), transparent 35%, transparent 65%, rgba(249,115,22,.7), rgba(255,255,255,.9)); }
 
-/* Account chip, settings card, tags */
+/* Account chip and settings card */
 .avatar { position: relative; width: 28px; height: 28px; flex: none; border-radius: 50%; overflow: hidden; display: grid; place-items: center; background: var(--grad); }
 .avatar b { font-size: 12px; color: #fff; }
 .avatar img { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; }
@@ -437,40 +434,9 @@ select.input { appearance: none; background-image: linear-gradient(45deg, transp
 .avatar.lg b { font-size: 16px; }
 .pill.account { align-items: center; }
 .pill.account > div { min-width: 0; }
-.tag-admin, .tag-ban, .tag-you { display: inline-block; vertical-align: 1px; font-size: 9.5px; font-weight: 700; letter-spacing: .06em; text-transform: uppercase; border-radius: 5px; padding: 1px 5px; margin-left: 4px; }
-.tag-admin { color: var(--violet-2); border: 1px solid rgba(167,139,250,.45); }
-.tag-ban { color: var(--red); border: 1px solid rgba(248,113,113,.45); }
-.tag-you { color: var(--cyan); border: 1px solid rgba(34,211,238,.4); }
 .account-card { display: flex; align-items: center; gap: 16px; margin-bottom: 18px; }
 .account-card .grow { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 2px; }
 .account-card .grow b { font-size: 15px; }
 .account-card .grow span { color: var(--muted); font-size: 12.5px; }
 .account-card .grow .faint { font-size: 11px; }
 
-/* Admin panel */
-.admin-stats { display: grid; grid-template-columns: repeat(4, 1fr); gap: 14px; }
-.admin-stat { padding: 18px 20px; display: flex; flex-direction: column; gap: 2px; }
-.admin-stat b { font-size: 28px; letter-spacing: -.03em; font-variant-numeric: tabular-nums; }
-.admin-stat span { color: var(--muted); font-size: 12px; }
-.admin-stat.red b { color: var(--red); }
-.admin-users { display: flex; flex-direction: column; gap: 12px; }
-.admin-user { padding: 16px 18px; }
-.admin-user.is-banned { border-color: rgba(248,113,113,.3); background: linear-gradient(90deg, rgba(248,113,113,.06), transparent 50%), var(--panel); }
-.admin-user-head { display: flex; align-items: center; gap: 14px; }
-.admin-user-head .grow { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 2px; }
-.admin-user-head .grow b { font-size: 14px; }
-.admin-user-head .grow span { color: var(--muted); font-size: 12px; }
-.ban-reason { color: var(--red) !important; }
-.admin-devices { margin-top: 12px; border-top: 1px solid var(--line); padding-top: 8px; display: flex; flex-direction: column; }
-.admin-device { display: flex; align-items: center; gap: 10px; padding: 7px 4px; font-size: 12.5px; border-radius: 8px; }
-.admin-device > svg { color: var(--faint); }
-.admin-device .mono { font-size: 12px; }
-.admin-device .grow { flex: 1; }
-.admin-device.is-banned .mono { color: var(--red); }
-.admin-bans { padding: 8px 14px; }
-.admin-nodev { padding: 8px 4px 0; font-size: 12px; }
-.btn.danger-solid { background: #dc2626; border-color: #dc2626; color: #fff; }
-.btn.danger-solid:hover { background: #ef4444; }
-.check-row { display: flex; gap: 10px; align-items: flex-start; font-size: 12.5px; color: var(--muted); margin: -4px 0 16px; cursor: pointer; }
-.check-row input { margin-top: 2px; accent-color: var(--violet); }
-.top-actions .search input#admin-search { width: 220px; }

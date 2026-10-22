@@ -1,4 +1,4 @@
-// Accounts: the sign-in screen (no guests), the account chip and the admin panel.
+// Accounts: the sign-in screen (no guests) and the account chip.
 // Loaded before app.js and shares its globals (S, call, toast, modal, icon, esc, go…),
 // which are only used once app.js has run.
 
@@ -49,19 +49,13 @@ function renderAuth() {
 
 function authKey() {
   const a = S.auth;
-  return JSON.stringify([a.ready, a.user?.id, a.banned, a.pending, a.recovery, a.error, authUi.mode, authUi.sent, authUi.busy, authUi.err]);
+  return JSON.stringify([a.ready, a.user?.id, a.pending, a.recovery, a.error, authUi.mode, authUi.sent, authUi.busy, authUi.err]);
 }
 
 function authBody() {
   const a = S.auth;
   const eclipse = (cls = '') => `<div class="eclipse sm ${cls}"><div class="corona"></div><div class="ring"></div><div class="moon"></div></div>`;
   if (!a.ready) return `${eclipse()}<h2>Checking your account…</h2>`;
-  if (a.banned) {
-    return `${eclipse('banned')}<h1>This device is banned</h1>
-      <p>Umbra can’t be used on this Mac.${a.banned.reason ? ` Reason: <b>${esc(a.banned.reason)}</b>` : ''}</p>
-      <p class="faint mono auth-id">Device ID ${esc(a.deviceId || '')}</p>
-      ${a.user ? '<div class="wz-actions"><button class="btn lg" data-auth="sign-out">Sign out</button></div>' : ''}`;
-  }
   if (a.recovery) {
     return `${eclipse()}<h2>Choose a new password</h2><p>For ${esc(a.user?.email || 'your account')}.</p>
       <form class="auth-form" data-form="set-password">
@@ -69,11 +63,6 @@ function authBody() {
         ${authUi.err ? `<div class="auth-err">${esc(authUi.err)}</div>` : ''}
         <button class="btn lg glow" ${authUi.busy ? 'disabled' : ''}>Save password</button>
       </form>`;
-  }
-  if (a.user) {
-    // Signed in but the device check couldn't reach the server.
-    return `${eclipse()}<h2>Can’t reach Umbra</h2><p>${esc(a.error || 'Checking this device…')}</p>
-      <div class="wz-actions"><button class="btn lg ghost" data-auth="sign-out">Sign out</button><button class="btn lg glow" data-auth="retry">${icon('refresh')}Try again</button></div>`;
   }
   if (a.pending) {
     return `${eclipse()}<h2>Continue in your browser</h2>
@@ -148,7 +137,7 @@ document.addEventListener('click', (e) => {
   }
   if (act) {
     const a = act.dataset.auth;
-    const ch = { 'sign-out': 'auth:sign-out', retry: 'auth:retry', cancel: 'auth:cancel' }[a];
+    const ch = { 'sign-out': 'auth:sign-out', cancel: 'auth:cancel' }[a];
     api.call(ch).catch((err) => toast(err.message, 'error'));
     if (a === 'sign-out') authUi = { mode: 'in' };
   }
@@ -159,7 +148,7 @@ function accountPill() {
   const a = S.auth;
   if (!a?.required || !a.user) return '';
   return `<div class="pill account" data-act="account-menu" style="cursor:pointer">${avatarHtml(a.user)}
-    <div><b>${esc(a.user.name)}${a.role === 'admin' ? ' <span class="tag-admin">Admin</span>' : ''}</b><span>${esc(a.user.email || providerName(a.user.provider))}</span></div></div>`;
+    <div><b>${esc(a.user.name)}</b><span>${esc(a.user.email || providerName(a.user.provider))}</span></div></div>`;
 }
 
 function accountCard() {
@@ -167,101 +156,16 @@ function accountCard() {
   if (!a?.required || !a.user) return '';
   return `<div class="card engine-card account-card">
     ${avatarHtml(a.user, 'avatar lg')}
-    <div class="grow"><b>${esc(a.user.name)}${a.role === 'admin' ? ' <span class="tag-admin">Admin</span>' : ''}</b>
+    <div class="grow"><b>${esc(a.user.name)}</b>
       <span>${esc(a.user.email)} · signed in with ${esc(providerName(a.user.provider))}</span>
-      <span class="faint mono">Device ID ${esc(a.deviceId || '')}</span></div>
-    ${a.role === 'admin' ? `<button class="btn" data-nav="admin">${icon('shield')}Admin Panel</button>` : ''}
+</div>
     <button class="btn" data-act="sign-out">Sign out</button>
   </div>`;
 }
 
-// ---------- admin panel ----------
-let ADMIN = null; // { users, bans } from the server
-let adminQuery = '';
-let adminErr = null;
-
-async function loadAdmin() {
-  try {
-    ADMIN = await api.call('admin:list');
-    adminErr = null;
-  } catch (e) {
-    adminErr = e.message;
-  }
-  if (view === 'admin') render();
-}
-
-const shortId = (h) => `${String(h).slice(0, 8)}…${String(h).slice(-4)}`;
-const when = (t) => (t ? ago(new Date(t).getTime()) : 'never');
-
-function viewAdmin() {
-  if (S.auth?.role !== 'admin') return '<p class="muted">Admins only.</p>';
-  if (adminErr) return `<div class="banner"><div class="badge-icon">${icon('alert')}</div><div class="grow"><b>Couldn’t load accounts</b><span>${esc(adminErr)}</span></div><button class="btn" data-act="admin-refresh">${icon('refresh')}Retry</button></div>`;
-  if (!ADMIN) return '<p class="muted">Loading accounts…</p>';
-  const q = adminQuery.trim().toLowerCase();
-  const users = ADMIN.users.filter((u) => !q || [u.name, u.email, u.provider, u.id, ...u.devices.map((d) => d.hwid)].some((x) => String(x || '').toLowerCase().includes(q)));
-  const devices = ADMIN.users.reduce((n, u) => n + u.devices.length, 0);
-  const me = S.auth.user.id;
-  const stat = (n, label, cls = '') => `<div class="card admin-stat ${cls}"><b>${n}</b><span>${label}</span></div>`;
-  return `<div class="admin-stats">
-      ${stat(ADMIN.users.length, 'Accounts')}
-      ${stat(devices, 'Devices')}
-      ${stat(ADMIN.users.filter((u) => u.banned).length, 'Banned accounts', 'red')}
-      ${stat(ADMIN.bans.length, 'Banned devices', 'red')}
-    </div>
-    <div class="section-h"><h2>Accounts</h2><span class="faint">${users.length} of ${ADMIN.users.length}</span></div>
-    <div class="admin-users">${users.map((u) => `
-      <div class="card admin-user ${u.banned ? 'is-banned' : ''}">
-        <div class="admin-user-head">
-          ${avatarHtml(u, 'avatar lg')}
-          <div class="grow"><b>${esc(u.name || u.email)} ${u.role === 'admin' ? '<span class="tag-admin">Admin</span>' : ''} ${u.banned ? '<span class="tag-ban">Banned</span>' : ''} ${u.id === me ? '<span class="tag-you">You</span>' : ''}</b>
-            <span>${esc(u.email || '')} · ${esc(providerName(u.provider))} · joined ${when(u.created)} · last seen ${when(u.lastSeen)}</span>
-            ${u.banned && u.reason ? `<span class="ban-reason">Reason: ${esc(u.reason)}</span>` : ''}</div>
-          ${u.id === me ? '' : `${u.banned ? `<button class="btn sm" data-act="admin-unban-user" data-id="${esc(u.id)}">Unban</button>`
-            : `<button class="btn sm danger" data-act="admin-ban-user" data-id="${esc(u.id)}">${icon('shield')}Ban…</button>`}
-            <button class="btn sm ghost" data-act="admin-user-menu" data-id="${esc(u.id)}">${icon('more')}</button>`}
-        </div>
-        ${u.devices.length ? `<div class="admin-devices">${u.devices.map((d) => `
-          <div class="admin-device ${d.banned ? 'is-banned' : ''}">
-            ${icon('chip')}<span class="mono" title="${esc(d.hwid)}">${esc(shortId(d.hwid))}</span>
-            <span class="faint">${esc(d.platform || '')} · v${esc(d.version || '?')} · ${when(d.lastSeen)}</span>
-            ${d.hwid.startsWith(S.auth.deviceId || '-') ? '<span class="tag-you">This Mac</span>' : ''}
-            ${d.banned ? '<span class="tag-ban">HWID banned</span>' : ''}
-            <span class="grow"></span>
-            <button class="btn sm ghost" data-act="admin-copy" data-hwid="${esc(d.hwid)}">Copy</button>
-            ${d.banned ? `<button class="btn sm" data-act="admin-unban-hwid" data-hwid="${esc(d.hwid)}">Unban HWID</button>`
-              : d.hwid.startsWith(S.auth.deviceId || '-') ? '' : `<button class="btn sm danger" data-act="admin-ban-hwid" data-hwid="${esc(d.hwid)}">Ban HWID…</button>`}
-          </div>`).join('')}</div>` : '<div class="faint admin-nodev">No devices yet</div>'}
-      </div>`).join('') || '<p class="muted">No accounts match.</p>'}</div>
-    <div class="section-h"><h2>Banned devices (HWIDs)</h2><button class="btn sm" data-act="admin-ban-hwid">${icon('plus')}Ban a device ID…</button></div>
-    <div class="card admin-bans">${ADMIN.bans.length ? ADMIN.bans.map((b) => `
-      <div class="admin-device is-banned">${icon('chip')}<span class="mono" title="${esc(b.hwid)}">${esc(shortId(b.hwid))}</span>
-        <span class="faint">${b.reason ? esc(b.reason) : 'No reason given'} · ${when(b.created)}${b.by ? ` · by ${esc(b.by)}` : ''}</span><span class="grow"></span>
-        <button class="btn sm" data-act="admin-unban-hwid" data-hwid="${esc(b.hwid)}">Unban</button></div>`).join('') : '<div class="faint admin-nodev">No banned devices</div>'}</div>`;
-}
-
-function banModal({ title, text, devices, hwidInput, run }) {
-  modal(`<h3>${esc(title)}</h3><p>${esc(text)}</p>
-    ${hwidInput ? '<div class="field"><label>Device ID (HWID)</label><input class="input mono" id="ban-hwid" placeholder="64-character device ID" spellcheck="false"></div>' : ''}
-    <div class="field"><label>Reason (shown to them)</label><input class="input" id="ban-reason" placeholder="e.g. Cheating, abuse, chargeback" maxlength="200"></div>
-    ${devices ? '<label class="check-row"><input type="checkbox" id="ban-devices" checked> Also ban every device they used (HWID ban), so new accounts on those Macs are blocked too</label>' : ''}
-    <div class="modal-actions"><button class="btn ghost" data-close>Cancel</button><button class="btn danger-solid" id="m-go">${icon('shield')}Ban</button></div>`,
-  (el, close) => {
-    $('#m-go', el).onclick = async () => {
-      const hwid = hwidInput ? $('#ban-hwid', el).value.trim().toLowerCase() : null;
-      if (hwidInput && !/^[0-9a-f]{16,128}$/.test(hwid)) return toast('Paste the full device ID (letters a–f and numbers)', 'error');
-      await run({ reason: $('#ban-reason', el).value.trim(), devices: devices && $('#ban-devices', el).checked, hwid });
-      close();
-      loadAdmin();
-    };
-  });
-}
-
-const adminUser = (id) => ADMIN?.users.find((u) => u.id === id);
-
 document.addEventListener('DOMContentLoaded', () => Object.assign(actions, {
   'account-menu': (el) => menu(el, [
     { icon: 'sliders', label: 'Account settings', run: () => go('settings') },
-    ...(S.auth.role === 'admin' ? [{ icon: 'shield', label: 'Admin panel', run: () => go('admin') }] : []),
     '-',
     { icon: 'stop', label: 'Sign out', danger: true, run: () => actions['sign-out']() },
   ]),
@@ -270,49 +174,4 @@ document.addEventListener('DOMContentLoaded', () => Object.assign(actions, {
     authUi = { mode: 'in' };
     await call('auth:sign-out');
   },
-  'admin-refresh': () => { ADMIN = null; adminErr = null; render(); loadAdmin(); },
-  'admin-copy': (el) => { navigator.clipboard.writeText(el.dataset.hwid); toast('Device ID copied'); },
-  'admin-ban-hwid': (el) => {
-    const hwid = el.dataset.hwid;
-    banModal({
-      title: hwid ? `Ban device ${shortId(hwid)}` : 'Ban a device ID',
-      text: 'A banned device can’t sign in or use Umbra with any account, including new ones.',
-      hwidInput: !hwid,
-      run: ({ reason, hwid: typed }) => call('admin:hwid', hwid || typed, true, reason).then(() => toast('Device banned')),
-    });
-  },
-  'admin-unban-hwid': async (el) => { await call('admin:hwid', el.dataset.hwid, false); toast('Device unbanned'); loadAdmin(); },
-  'admin-ban-user': (el) => {
-    const u = adminUser(el.dataset.id);
-    banModal({
-      title: `Ban ${u.name || u.email}`,
-      text: 'They’ll be signed out of Umbra within a few minutes and can’t sign back in.',
-      devices: true,
-      run: ({ reason, devices }) => call('admin:user', u.id, true, reason, devices).then(() => toast(`${u.name || u.email} is banned`)),
-    });
-  },
-  'admin-unban-user': async (el) => {
-    const u = adminUser(el.dataset.id);
-    const devices = u.devices.some((d) => d.banned) && confirm('Also unban the devices they used?');
-    await call('admin:user', u.id, false, null, devices);
-    toast(`${u.name || u.email} is unbanned`);
-    loadAdmin();
-  },
-  'admin-user-menu': (el) => {
-    const u = adminUser(el.dataset.id);
-    menu(el, [
-      { icon: 'shield', label: u.role === 'admin' ? 'Remove admin' : 'Make admin', run: async () => { await call('admin:role', u.id, u.role === 'admin' ? 'user' : 'admin'); toast('Role updated'); loadAdmin(); } },
-      { icon: 'chip', label: 'Ban all their devices…', danger: true, run: () => banModal({
-        title: `Ban ${u.name || u.email}’s devices`,
-        text: `Bans the account and all ${u.devices.length} device(s) it used.`,
-        run: ({ reason }) => call('admin:user', u.id, true, reason, true).then(() => toast('Account and devices banned')),
-      }) },
-    ]);
-  },
 }));
-
-document.addEventListener('input', (e) => {
-  if (e.target.id !== 'admin-search') return;
-  adminQuery = e.target.value;
-  if (view === 'admin') $('#view').innerHTML = viewAdmin();
-});

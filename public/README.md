@@ -4,7 +4,7 @@
 
 Umbra is a CrossOver-style launcher with a dark UI. It runs Windows programs on macOS through [Wine](https://www.winehq.org/), the open-source compatibility layer that CrossOver is also built on.
 
-- **Accounts, no guests**: sign in with email, Google, Discord or GitHub before using Umbra. Admins get an Admin panel to ban accounts and device IDs (HWIDs).
+- **Accounts, no guests**: sign up or sign in with email, Google, Discord or GitHub before using Umbra.
 - **Welcome setup**: on first launch Umbra asks what you want (Steam, Windows essentials, game components, .NET) and installs it all with one click.
 - **Pre-installed Windows tools**: Task Manager, File Explorer, Notepad, Command Prompt, Control Panel, Registry Editor, WordPad and Minesweeper are in your Library from the start.
 - **Get Apps**: one-click installs for Steam, the Epic Games Launcher, GOG Galaxy, Battle.net, EA app, Ubisoft Connect, 7-Zip, Notepad++ and VLC.

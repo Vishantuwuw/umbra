@@ -1,30 +1,20 @@
-// Accounts: sign-in (email, Google, Discord, …), device registration and bans.
+// Accounts: sign-in and sign-up (email, Google, Discord, …).
 // Runs in the main process; the renderer only talks to it over IPC.
 const fs = require('fs');
-const os = require('os');
 const path = require('path');
-const crypto = require('crypto');
-const { execFile } = require('child_process');
 const { app, shell } = require('electron');
 const config = require('./config');
 
 const REDIRECT = 'umbra://auth/callback';
-const RECHECK_MS = 5 * 60 * 1000;
-// With no connection, a signed-in device that passed its last check keeps working this long.
-const OFFLINE_GRACE_MS = 3 * 24 * 3600 * 1000;
 
 let client = null;
 let emit = () => {};
-let hwid = null;
 let session = null;
-let check = null; // { role, banned, reason, at } from the last successful device check
-let deviceBan = null; // { reason } when this machine is banned (checked before sign-in)
 let pending = null; // OAuth provider waiting for the browser
 let recovery = false; // signed in from a password-reset link; must set a new password
 let ready = false;
 let error = null;
 let queuedUrl = null;
-let timer = null;
 
 const configured = () => Boolean(config.supabaseUrl && config.supabaseAnonKey);
 
@@ -48,30 +38,6 @@ const storage = {
   removeItem: (k) => { delete readDisk()[k]; writeDisk(); },
 };
 
-// ---------- hardware id ----------
-function run(cmd, args) {
-  return new Promise((resolve) => execFile(cmd, args, { timeout: 8000 }, (err, out) => resolve(err ? '' : String(out))));
-}
-
-// A stable per-machine id, hashed so the raw hardware UUID never leaves the Mac.
-async function hardwareId() {
-  let raw = '';
-  if (process.platform === 'darwin') {
-    raw = ((await run('/usr/sbin/ioreg', ['-rd1', '-c', 'IOPlatformExpertDevice'])).match(/"IOPlatformUUID"\s*=\s*"([^"]+)"/) || [])[1] || '';
-  } else if (process.platform === 'win32') {
-    raw = ((await run('reg', ['query', 'HKLM\\SOFTWARE\\Microsoft\\Cryptography', '/v', 'MachineGuid'])).match(/MachineGuid\s+REG_SZ\s+(\S+)/) || [])[1] || '';
-  } else {
-    for (const f of ['/etc/machine-id', '/var/lib/dbus/machine-id']) {
-      try { raw = fs.readFileSync(f, 'utf8').trim(); if (raw) break; } catch {}
-    }
-  }
-  if (!raw) {
-    const macs = Object.values(os.networkInterfaces()).flat().filter((n) => n && !n.internal && n.mac !== '00:00:00:00:00:00').map((n) => n.mac).sort();
-    raw = `${os.hostname()}|${macs[0] || ''}`;
-  }
-  return crypto.createHash('sha256').update(`umbra-hwid:${raw}`).digest('hex');
-}
-
 // ---------- state ----------
 function userInfo(u) {
   if (!u) return null;
@@ -85,12 +51,6 @@ function userInfo(u) {
   };
 }
 
-function banned() {
-  if (deviceBan) return deviceBan;
-  if (session && check?.banned) return { reason: check.reason };
-  return null;
-}
-
 function state() {
   if (!configured()) return { required: false };
   const user = session ? userInfo(session.user) : null;
@@ -98,56 +58,19 @@ function state() {
     required: true,
     ready,
     user,
-    role: user && check ? check.role : 'user',
-    banned: banned(),
     pending,
     recovery,
     error,
-    deviceId: hwid ? hwid.slice(0, 12) : null,
     providers: config.providers,
   };
 }
 
-// True while the app must stay behind the sign-in (or banned) screen.
+// True while the app must stay behind the sign-in screen.
 function locked() {
-  if (!configured()) return false;
-  if (!ready || !session || banned() || recovery) return true;
-  // Signed in but never verified this device (e.g. first sign-in while offline).
-  return !check;
+  return configured() && (!ready || !session || recovery);
 }
 
 function changed() { emit(state()); }
-
-// ---------- device checks ----------
-async function checkDevice() {
-  if (!client) return;
-  try {
-    const { data, error: e } = await client.rpc('hwid_status', { p_hwid: hwid });
-    if (e) throw e;
-    deviceBan = data?.banned ? { reason: data.reason || null } : null;
-  } catch (e) {
-    console.warn('Umbra: device check failed:', e.message);
-  }
-  if (!session) return;
-  try {
-    const { data, error: e } = await client.rpc('register_device', { p_hwid: hwid, p_platform: `${process.platform}-${process.arch}`, p_version: app.getVersion() });
-    if (e) throw e;
-    check = { role: data.role, banned: data.banned, reason: data.reason, at: Date.now() };
-    storage.setItem('umbra.check', JSON.stringify({ ...check, user: session.user.id }));
-    error = null;
-  } catch (e) {
-    // Offline: keep the last good check for a while instead of locking people out.
-    if (!check || Date.now() - check.at > OFFLINE_GRACE_MS) {
-      check = null;
-      error = `Couldn’t reach the Umbra account server (${e.message}). Check your connection and try again.`;
-    }
-  }
-}
-
-async function refresh() {
-  await checkDevice();
-  changed();
-}
 
 // ---------- lifecycle ----------
 async function init(onChange) {
@@ -159,8 +82,6 @@ async function init(onChange) {
     error = `Couldn’t start sign-in (${e.message})`;
   }
   ready = true;
-  clearInterval(timer);
-  timer = setInterval(refresh, RECHECK_MS);
   if (queuedUrl) handleUrl(queuedUrl);
   return state();
 }
@@ -170,23 +91,16 @@ async function start() {
   client = createClient(config.supabaseUrl, config.supabaseAnonKey, {
     auth: { flowType: 'pkce', storage, persistSession: true, autoRefreshToken: true, detectSessionInUrl: false },
   });
-  hwid = await hardwareId();
-  try {
-    const saved = JSON.parse(storage.getItem('umbra.check') || 'null');
-    if (saved) check = saved;
-  } catch {}
   const { data } = await client.auth.getSession();
   session = data.session;
-  if (!session || check?.user !== session.user.id) check = null;
   client.auth.onAuthStateChange((event, s) => {
     const before = session?.user?.id;
     session = s;
     if (event === 'PASSWORD_RECOVERY') recovery = true;
-    if (event === 'SIGNED_OUT') { check = null; recovery = false; storage.removeItem('umbra.check'); }
-    if (s && s.user.id !== before) { pending = null; check = null; setImmediate(refresh); }
+    if (event === 'SIGNED_OUT') recovery = false;
+    if (s && s.user.id !== before) pending = null;
     changed();
   });
-  await checkDevice();
 }
 
 // umbra://auth/callback?code=… from the browser (OAuth, email confirmation, password reset).
@@ -217,7 +131,6 @@ function fail(e) {
 
 async function signInEmail(email, password) {
   need();
-  if (deviceBan) throw new Error('This device is banned from Umbra');
   const { error: e } = await client.auth.signInWithPassword({ email: String(email).trim(), password });
   fail(e);
   return state();
@@ -225,7 +138,6 @@ async function signInEmail(email, password) {
 
 async function signUpEmail(email, password, name) {
   need();
-  if (deviceBan) throw new Error('This device is banned from Umbra');
   if (String(password).length < 8) throw new Error('Use at least 8 characters for your password');
   const { data, error: e } = await client.auth.signUp({
     email: String(email).trim(),
@@ -239,7 +151,6 @@ async function signUpEmail(email, password, name) {
 
 async function signInProvider(provider) {
   need();
-  if (deviceBan) throw new Error('This device is banned from Umbra');
   if (!config.providers.includes(provider)) throw new Error(`Unknown sign-in provider ${provider}`);
   const { data, error: e } = await client.auth.signInWithOAuth({ provider, options: { redirectTo: REDIRECT, skipBrowserRedirect: true } });
   fail(e);
@@ -270,30 +181,10 @@ async function signOut() {
   if (!client) return;
   await client.auth.signOut().catch(() => {});
   session = null;
-  check = null;
   changed();
 }
 
-async function retry() {
-  error = null;
-  await refresh();
-}
-
-// ---------- admin ----------
-async function admin(fn, args) {
-  need();
-  if (state().role !== 'admin') throw new Error('Admins only');
-  const { data, error: e } = await client.rpc(fn, args);
-  fail(e);
-  return data;
-}
-const adminList = () => admin('admin_list_users', {});
-const adminHwidBan = (h, banned, reason) => admin('admin_set_hwid_ban', { p_hwid: String(h).trim().toLowerCase(), p_banned: banned, p_reason: reason || null });
-const adminUserBan = (id, banned, reason, devices) => admin('admin_set_user_ban', { p_user: id, p_banned: banned, p_reason: reason || null, p_devices: Boolean(devices) });
-const adminRole = (id, role) => admin('admin_set_role', { p_user: id, p_role: role === 'admin' ? 'admin' : 'user' });
-
 module.exports = {
-  REDIRECT, configured, init, state, locked, handleUrl, refresh, retry,
+  REDIRECT, configured, init, state, locked, handleUrl,
   signInEmail, signUpEmail, signInProvider, cancelPending, resetPassword, setPassword, signOut,
-  adminList, adminHwidBan, adminUserBan, adminRole, hardwareId,
 };
