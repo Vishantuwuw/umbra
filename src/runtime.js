@@ -455,6 +455,58 @@ function importSteamGames(bottleId) {
   return added;
 }
 
+const shq = (v) => `'${String(v).replace(/'/g, `'\\''`)}'`;
+
+// Builds ~/Applications/Umbra/<name>.app, a tiny launcher that starts the app
+// straight through Wine so it shows up in Launchpad, Spotlight and the Dock.
+async function createMacLauncher(id) {
+  const a = store.get().apps.find((x) => x.id === id);
+  if (!a) throw new Error('App not found');
+  const b = bottle(a.bottleId);
+  const bin = requireEngine();
+  const safe = a.name.replace(/[\/:*?"<>|]/g, '').trim() || 'Windows App';
+  const root = path.join(app.getPath('home'), 'Applications', 'Umbra', `${safe}.app`);
+  const contents = path.join(root, 'Contents');
+  fs.rmSync(root, { recursive: true, force: true });
+  fs.mkdirSync(path.join(contents, 'MacOS'), { recursive: true });
+  fs.mkdirSync(path.join(contents, 'Resources'), { recursive: true });
+  const env = wineEnv(b);
+  const keep = ['WINEPREFIX', 'WINEDEBUG', 'WINEDLLOVERRIDES', 'WINEMSYNC', 'WINEESYNC', 'MTL_HUD_ENABLED', 'PATH'];
+  const script = [
+    '#!/bin/sh',
+    `# Launches “${a.name}” from the Umbra bottle “${b.name}”.`,
+    ...keep.filter((k) => env[k] !== undefined).map((k) => `export ${k}=${shq(env[k])}`),
+    `cd ${shq(path.dirname(a.exe))} || exit 1`,
+    `exec ${shq(bin)} ${[...argsFor(a.exe), ...splitArgs(a.args)].map(shq).join(' ')}`,
+    '',
+  ].join('\n');
+  const launcher = path.join(contents, 'MacOS', 'launch');
+  fs.writeFileSync(launcher, script, { mode: 0o755 });
+  let iconKey = '';
+  if (a.icon && process.platform === 'darwin') {
+    const icns = path.join(contents, 'Resources', 'icon.icns');
+    await engine.exec('/usr/bin/sips', ['-s', 'format', 'icns', a.icon, '--out', icns]).catch(() => {});
+    if (fs.existsSync(icns)) iconKey = '<key>CFBundleIconFile</key><string>icon</string>';
+  }
+  const bundleId = `app.umbra.launcher.${a.id.replace(/[^a-z0-9]/gi, '')}`;
+  const xml = (v) => String(v).replace(/&/g, '&amp;').replace(/</g, '&lt;');
+  fs.writeFileSync(path.join(contents, 'Info.plist'), `<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0"><dict>
+<key>CFBundleName</key><string>${xml(a.name)}</string>
+<key>CFBundleDisplayName</key><string>${xml(a.name)}</string>
+<key>CFBundleIdentifier</key><string>${bundleId}</string>
+<key>CFBundleExecutable</key><string>launch</string>
+<key>CFBundlePackageType</key><string>APPL</string>
+<key>CFBundleShortVersionString</key><string>1.0</string>
+<key>LSApplicationCategoryType</key><string>public.app-category.games</string>
+${iconKey}
+</dict></plist>
+`);
+  log(`Created Mac launcher: ${root}`);
+  return root;
+}
+
 function removeApp(id) {
   const s = store.get();
   s.apps = s.apps.filter((a) => a.id !== id);
@@ -508,5 +560,5 @@ async function installSteam(onProgress) {
 
 module.exports = {
   init, setEngine, getEngine, createBottle, deleteBottle, setWinver, setRetina, launch, runningList, stop, kill,
-  tool, driveC, scan, isInstaller, installComponent, runWinetricks, setDxvk, addApp, refreshIcons, importSteamGames, updateApp, removeApp, runApp, steamStatus, installSteam, prefixOf, bottle,
+  tool, driveC, scan, isInstaller, createMacLauncher, installComponent, runWinetricks, setDxvk, addApp, refreshIcons, importSteamGames, updateApp, removeApp, runApp, steamStatus, installSteam, prefixOf, bottle,
 };

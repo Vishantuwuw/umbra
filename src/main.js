@@ -279,6 +279,11 @@ handle('app:reveal', (id) => {
   if (a) shell.showItemInFolder(a.exe);
 });
 
+handle('app:launcher', async (id) => {
+  const where = await runtime.createMacLauncher(id);
+  shell.showItemInFolder(where);
+  return where;
+});
 handle('run:file', (opts) => runtime.launch(opts));
 handle('run:stop', (runId) => runtime.stop(runId));
 

@@ -54,6 +54,13 @@ app.whenReady().then(async () => {
   try { execFileSync('/usr/sbin/screencapture', ['-x', path.join(shots, 'mac-exe-running.png')]); } catch (e) { console.log('screencapture failed:', e.message); }
   await runtime.kill(b.id);
 
+  try {
+    const where = await runtime.createMacLauncher(app_.id);
+    const plist = path.join(where, 'Contents', 'Info.plist');
+    if (process.platform === 'darwin') execFileSync('/usr/bin/plutil', ['-lint', plist], { stdio: 'inherit' });
+    console.log(`PASS: Mac launcher created at ${where}`);
+  } catch (e) { console.log(`WARN: Mac launcher failed: ${e.message}`); }
+
   // Components and DXVK: reported, not fatal, since they depend on third-party downloads.
   for (const [label, fn] of [
     ['Visual C++ component', () => runtime.installComponent(b.id, 'vcrun', (f, l) => console.log(pct(f), l))],

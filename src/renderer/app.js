@@ -558,6 +558,7 @@ const actions = {
       { icon: 'play', label: 'Play', run: () => call('app:run', a.id) },
       { icon: 'edit', label: 'Edit…', run: () => editAppModal(a) },
       { icon: 'folder', label: 'Show in Finder', run: () => call('app:reveal', a.id) },
+      { icon: 'window', label: 'Add to Mac Applications', run: async () => { await call('app:launcher', a.id); toast(`${a.name} is now in ~/Applications/Umbra — find it in Launchpad or Spotlight`); } },
       '-',
       { icon: 'trash', label: 'Remove from Library', danger: true, run: () => call('app:remove', a.id) },
     ]);

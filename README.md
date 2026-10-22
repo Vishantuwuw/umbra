@@ -7,6 +7,8 @@
 - **Components**: one-click Visual C++ 2015–2022, .NET Desktop Runtime 8, DirectX 9 extras and Wine Mono/Gecko per bottle, plus winetricks for anything else. This is the fix for most "app won't start" problems.
 - **DXVK (experimental)**: per-bottle DirectX 10/11 → Vulkan → Metal translation for faster games.
 - **Real artwork**: icons pulled from each `.exe`, and official Steam cover art for Steam games.
+- **Add to Mac Applications**: any Windows app or game gets its own launcher in `~/Applications/Umbra`, so it shows up in Launchpad, Spotlight and the Dock.
+- **Native Mac menus**: Run Windows Program (⌘O), New Bottle (⌘N), ⌘1–5 to switch pages, plus an in-app notice when an update is out.
 - **Steam library import**: installed Steam games are added with their real names and covers, automatically whenever Steam closes.
 - **Bottles**: isolated Windows 10/11/7/XP environments, each with its own C: drive and registry.
 - **One-click Steam**: downloads Valve's official Windows Steam installer into a dedicated bottle.
