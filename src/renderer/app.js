@@ -95,9 +95,16 @@ async function call(ch, ...args) {
     return await api.call(ch, ...args);
   } catch (e) {
     toast(e.message, 'error');
+    e.shown = true;
     throw e;
   }
 }
+
+// Errors from call() have already been shown as a toast; show anything else once.
+window.addEventListener('unhandledrejection', (e) => {
+  e.preventDefault();
+  if (!e.reason?.shown) toast(e.reason?.message || String(e.reason), 'error');
+});
 
 function toast(msg, kind = 'ok') {
   const el = document.createElement('div');
@@ -309,6 +316,7 @@ function viewStore() {
       <h2>${S.steam.installed ? 'Steam is installed.' : 'Play your Steam games on your Mac.'}</h2>
       <p>${S.steam.installed ? 'Open Steam, sign in and install games as usual. When Steam closes, your installed games show up in the Library with their cover art.'
         : 'Installs Valve’s official Steam for Windows. No Windows license needed.'}</p>
+      <p class="faint" style="font-size:12.5px;margin-top:-16px;margin-bottom:22px">Tip: Steam’s first launch installs a big update, so let it finish. If macOS asks to let it find devices on your local network, click <b>Allow</b>.</p>
       <div class="row" style="display:flex;gap:10px;flex-wrap:wrap">${storeButton(steam)}${S.steam.installed ? ` <button class="btn" data-act="steam-import">${icon('download')}Import my Steam games</button> <button class="btn" data-act="steam-repair">${icon('refresh')}Repair Steam</button>` : ''}</div>
     </div>
     <div class="section-h"><h2>Game Stores</h2></div>
@@ -448,6 +456,8 @@ function modal(html, onMount) {
   return close;
 }
 
+// The last-used bottle if it still exists, else the first one.
+const defaultBottleId = () => (S.bottles.some((b) => b.id === S.settings.lastBottleId) ? S.settings.lastBottleId : S.bottles[0]?.id);
 const bottleOptions = (sel) => S.bottles.map((b) => `<option value="${b.id}" ${b.id === sel ? 'selected' : ''}>${esc(b.name)} — ${winverName(b.winver)}</option>`).join('');
 
 async function ensureBottle() {
@@ -460,7 +470,7 @@ async function ensureBottle() {
 
 async function runFileFlow(file, presetBottle) {
   if (!S.engine || !S.bottles.length) { openWizard(); return; }
-  const def = presetBottle || S.settings.lastBottleId || S.bottles[0].id;
+  const def = presetBottle || defaultBottleId();
   const guess = basename(file).replace(/\.(exe|msi|bat|cmd|lnk)$/i, '');
   const installer = /\.msi$/i.test(file) || /(setup|install|^inst[_-]|_inst\b)/i.test(basename(file));
   modal(`<h3>${installer ? 'Install this program?' : 'Run this program?'}</h3><p>${installer ? 'It installs like it would on a PC. When it finishes, Umbra adds it to your Library.' : 'It opens in its own window on your Mac.'}</p>
@@ -513,7 +523,7 @@ async function addAppModal() {
   if (!(await ensureBottle().catch(() => false))) return;
   const f = await call('dialog:exe');
   if (!f) return;
-  editAppModal({ exe: f, name: basename(f).replace(/\.[^.]+$/, ''), args: '', bottleId: S.settings.lastBottleId || S.bottles[0].id }, true);
+  editAppModal({ exe: f, name: basename(f).replace(/\.[^.]+$/, ''), args: '', bottleId: defaultBottleId() }, true);
 }
 
 function editAppModal(a, isNew) {

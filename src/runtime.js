@@ -143,6 +143,7 @@ async function deleteBottle(id) {
   const s = store.get();
   s.bottles = s.bottles.filter((x) => x.id !== id);
   s.apps = s.apps.filter((a) => a.bottleId !== id);
+  if (s.settings.lastBottleId === id) s.settings.lastBottleId = null;
   store.save();
   log(`Deleted bottle “${b.name}”`);
 }
@@ -430,6 +431,7 @@ function addApp({ bottleId, exe, name, args = '', steamAppId, category, catalogI
     bottleId, exe, name: game?.name || name || prettyName(exe), args, added: Date.now(), playtime: 0,
     steamAppId: steamAppId || game?.appid || null,
     icon: icons.extract(exe),
+    iconFor: exe,
     ...(category ? { category } : {}),
     ...(catalogId ? { catalogId } : {}),
   };
@@ -447,12 +449,16 @@ function updateApp(id, patch) {
 }
 
 // Fills in icons for apps added before icon support, or whose exe changed.
+// Each exe is only tried once (iconFor records it), since exes without an icon
+// would otherwise be re-read in full on every launch.
 function refreshIcons() {
   let changed = false;
   for (const a of store.get().apps) {
     if (a.icon && fs.existsSync(a.icon)) continue;
-    const icon = icons.extract(a.exe);
-    if (icon) { a.icon = icon; changed = true; }
+    if (a.iconFor === a.exe) continue;
+    a.icon = icons.extract(a.exe);
+    a.iconFor = a.exe;
+    changed = true;
   }
   if (changed) store.save();
 }
@@ -684,7 +690,15 @@ async function uninstallApp(id) {
   return gone.map((x) => x.name);
 }
 
-async function installSteam(onProgress) {
+let steamInstall = null;
+
+// Setup and Get Apps can both ask for Steam; share one install instead of racing.
+function installSteam(onProgress) {
+  steamInstall ||= doInstallSteam(onProgress).finally(() => { steamInstall = null; });
+  return steamInstall;
+}
+
+async function doInstallSteam(onProgress) {
   requireEngine();
   const s = store.get();
   let b = s.bottles.find((x) => x.steam) || mainBottle();

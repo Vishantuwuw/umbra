@@ -399,3 +399,6 @@ select.input { appearance: none; background-image: linear-gradient(45deg, transp
 .eclipse .moon { position: absolute; inset: 1px; border-radius: 50%; background: radial-gradient(circle at 40% 35%, #111 0%, #000 70%); }
 .wz-card.still { animation: none; }
 .wizard { overflow-y: auto; justify-content: safe center; }
+/* Keep the Steam card readable on small windows: text above the decorative orb. */
+.steam-hero > :not(.orb) { position: relative; z-index: 1; }
+@media (max-width: 1150px) { .steam-hero .orb { right: -80px; opacity: .35; } }
