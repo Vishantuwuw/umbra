@@ -2,7 +2,7 @@
 
 **Run Windows apps and games on your Mac.** Umbra is a CrossOver-style launcher with a dark UI. It runs Windows programs on macOS through [Wine](https://www.winehq.org/), the open-source compatibility layer that CrossOver is also built on.
 
-- **Accounts, no guests**: sign up or sign in with email, Google, Discord or GitHub before using Umbra. Setup guide: [ACCOUNTS.md](ACCOUNTS.md).
+- **Accounts, no guests**: create an account (email and password) and sign in before using Umbra. Accounts are stored only on your Mac, with passwords hashed using scrypt.
 - **Welcome setup**: on first launch Umbra asks what you want (Steam, Windows essentials, game components, .NET) and installs it all with one click.
 - **Pre-installed Windows tools**: Task Manager, File Explorer, Notepad, Command Prompt, Control Panel, Registry Editor, WordPad and Minesweeper are in your Library from the start.
 - **Get Apps**: one-click installs for Steam, the Epic Games Launcher, GOG Galaxy, Battle.net, EA app, Ubisoft Connect, 7-Zip, Notepad++ and VLC.
@@ -62,9 +62,7 @@ npm run dist:mac        # build Umbra .dmg + .zip (on a Mac)
 npx electron test/smoke.js   # end-to-end: engine → bottle → installer → run installed app
 ```
 
-This is the private source repo. Each push to `main` runs a GitHub Actions job on a real Mac. That job installs the Wine engine, creates a bottle, runs a test installer (`test/hello-setup.exe`), checks the installed app was added to the Library and runs it. It then builds the app and publishes the `.dmg` and `.zip` files as release `v<version>` to the public, code-free repo [coldvini/umbra](https://github.com/coldvini/umbra), using the version in `package.json`. That repo shows only `public/README.md` and the newest release.
-
-Publishing needs a repository secret named `PUBLIC_REPO_TOKEN`: a fine-grained token with **Contents: Read and write** on `coldvini/umbra`. To change the public page, edit `public/README.md` and copy it there.
+Each push to `main` runs a GitHub Actions job on a real Mac. That job installs the Wine engine, creates a bottle, runs a test installer (`test/hello-setup.exe`), checks the installed app was added to the Library and runs it, then builds the app and publishes the `.dmg` and `.zip` files as release `v<version>`, using the version in `package.json`.
 
 ## How it works
 

@@ -1,190 +1,99 @@
-// Accounts: sign-in and sign-up (email, Google, Discord, …).
-// Runs in the main process; the renderer only talks to it over IPC.
+// Accounts: sign-up and sign-in with an email and password, stored on this Mac.
+// Passwords are hashed with scrypt; the app stays locked until someone signs in.
 const fs = require('fs');
 const path = require('path');
-const { app, shell } = require('electron');
-const config = require('./config');
+const crypto = require('crypto');
+const { app } = require('electron');
 
-const REDIRECT = 'umbra://auth/callback';
-
-let client = null;
 let emit = () => {};
-let session = null;
-let pending = null; // OAuth provider waiting for the browser
-let recovery = false; // signed in from a password-reset link; must set a new password
-let ready = false;
-let error = null;
-let queuedUrl = null;
+let db = null; // { users: [{ id, email, name, salt, hash, created }], session: { userId, at } | null }
 
-const configured = () => Boolean(config.supabaseUrl && config.supabaseAnonKey);
+const file = () => path.join(app.getPath('userData'), 'accounts.json');
+const normEmail = (e) => String(e || '').trim().toLowerCase();
 
-// ---------- session storage ----------
-const file = () => path.join(app.getPath('userData'), 'account.json');
-let disk = null;
-function readDisk() {
-  if (disk) return disk;
-  try { disk = JSON.parse(fs.readFileSync(file(), 'utf8')); } catch { disk = {}; }
-  return disk;
+function load() {
+  if (db) return db;
+  try { db = JSON.parse(fs.readFileSync(file(), 'utf8')); } catch { db = {}; }
+  db.users ||= [];
+  db.session ||= null;
+  return db;
 }
-function writeDisk() {
+
+function save() {
   fs.mkdirSync(path.dirname(file()), { recursive: true });
   const tmp = `${file()}.tmp`;
-  fs.writeFileSync(tmp, JSON.stringify(disk), { mode: 0o600 });
+  fs.writeFileSync(tmp, JSON.stringify(db, null, 2), { mode: 0o600 });
   fs.renameSync(tmp, file());
 }
-const storage = {
-  getItem: (k) => readDisk()[k] ?? null,
-  setItem: (k, v) => { readDisk()[k] = v; writeDisk(); },
-  removeItem: (k) => { delete readDisk()[k]; writeDisk(); },
-};
 
-// ---------- state ----------
-function userInfo(u) {
-  if (!u) return null;
-  const m = u.user_metadata || {};
-  return {
-    id: u.id,
-    email: u.email || m.email || '',
-    name: m.full_name || m.name || m.user_name || m.preferred_username || (u.email || '').split('@')[0] || 'Player',
-    avatar: m.avatar_url || m.picture || null,
-    provider: u.app_metadata?.provider || 'email',
-  };
+const hashPassword = (password, salt) => new Promise((resolve, reject) => {
+  crypto.scrypt(String(password), salt, 64, { N: 16384, r: 8, p: 1 }, (err, key) => (err ? reject(err) : resolve(key)));
+});
+
+function current() {
+  const s = load().session;
+  return s ? db.users.find((u) => u.id === s.userId) || null : null;
 }
 
 function state() {
-  if (!configured()) return { required: false };
-  const user = session ? userInfo(session.user) : null;
+  const u = current();
   return {
     required: true,
-    ready,
-    user,
-    pending,
-    recovery,
-    error,
-    providers: config.providers,
+    ready: true,
+    user: u ? { id: u.id, email: u.email, name: u.name, provider: 'email' } : null,
+    hasAccounts: load().users.length > 0,
   };
 }
 
-// True while the app must stay behind the sign-in screen.
-function locked() {
-  return configured() && (!ready || !session || recovery);
-}
+// True while the app must stay behind the sign-in screen: no guests.
+const locked = () => !current();
 
 function changed() { emit(state()); }
 
-// ---------- lifecycle ----------
 async function init(onChange) {
   emit = onChange;
-  if (!configured()) { ready = true; return state(); }
-  try {
-    await start();
-  } catch (e) {
-    error = `Couldn’t start sign-in (${e.message})`;
-  }
-  ready = true;
-  if (queuedUrl) handleUrl(queuedUrl);
+  load();
   return state();
 }
 
-async function start() {
-  const { createClient } = require('@supabase/supabase-js');
-  client = createClient(config.supabaseUrl, config.supabaseAnonKey, {
-    auth: { flowType: 'pkce', storage, persistSession: true, autoRefreshToken: true, detectSessionInUrl: false },
-  });
-  const { data } = await client.auth.getSession();
-  session = data.session;
-  client.auth.onAuthStateChange((event, s) => {
-    const before = session?.user?.id;
-    session = s;
-    if (event === 'PASSWORD_RECOVERY') recovery = true;
-    if (event === 'SIGNED_OUT') recovery = false;
-    if (s && s.user.id !== before) pending = null;
-    changed();
-  });
-}
-
-// umbra://auth/callback?code=… from the browser (OAuth, email confirmation, password reset).
-async function handleUrl(url) {
-  if (!client) { queuedUrl = url; return; }
-  queuedUrl = null;
-  let u;
-  try { u = new URL(url); } catch { return; }
-  const params = new URLSearchParams(u.search || u.hash.slice(1));
-  const hash = new URLSearchParams(u.hash.slice(1));
-  const err = params.get('error_description') || hash.get('error_description');
-  pending = null;
-  if (err) { error = err.replace(/\+/g, ' '); changed(); return; }
-  if (params.get('type') === 'recovery' || hash.get('type') === 'recovery') recovery = true;
-  const code = params.get('code');
-  if (!code) { changed(); return; }
-  const { error: e } = await client.auth.exchangeCodeForSession(code);
-  error = e ? e.message : null;
+function startSession(u) {
+  db.session = { userId: u.id, at: Date.now() };
+  save();
   changed();
-}
-
-function need() {
-  if (!client) throw new Error('Accounts aren’t set up in this build of Umbra');
-}
-function fail(e) {
-  if (e) throw new Error(e.message === 'Invalid login credentials' ? 'Wrong email or password' : e.message);
-}
-
-async function signInEmail(email, password) {
-  need();
-  const { error: e } = await client.auth.signInWithPassword({ email: String(email).trim(), password });
-  fail(e);
   return state();
 }
 
 async function signUpEmail(email, password, name) {
-  need();
-  if (String(password).length < 8) throw new Error('Use at least 8 characters for your password');
-  const { data, error: e } = await client.auth.signUp({
-    email: String(email).trim(),
-    password,
-    options: { data: { full_name: String(name || '').trim() || undefined }, emailRedirectTo: REDIRECT },
-  });
-  fail(e);
-  // With email confirmation on, there's no session until the link is clicked.
-  return { confirm: !data.session };
+  const e = normEmail(email);
+  if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(e)) throw new Error('Enter a valid email address');
+  if (String(password || '').length < 8) throw new Error('Use at least 8 characters for your password');
+  if (load().users.some((u) => u.email === e)) throw new Error('There’s already an account with that email. Sign in instead.');
+  const salt = crypto.randomBytes(16).toString('hex');
+  const u = {
+    id: crypto.randomUUID(),
+    email: e,
+    name: String(name || '').trim().slice(0, 40) || e.split('@')[0],
+    salt,
+    hash: (await hashPassword(password, salt)).toString('hex'),
+    created: Date.now(),
+  };
+  db.users.push(u);
+  startSession(u);
+  return { confirm: false };
 }
 
-async function signInProvider(provider) {
-  need();
-  if (!config.providers.includes(provider)) throw new Error(`Unknown sign-in provider ${provider}`);
-  const { data, error: e } = await client.auth.signInWithOAuth({ provider, options: { redirectTo: REDIRECT, skipBrowserRedirect: true } });
-  fail(e);
-  pending = provider;
-  error = null;
-  changed();
-  await shell.openExternal(data.url);
-}
-
-function cancelPending() { pending = null; changed(); }
-
-async function resetPassword(email) {
-  need();
-  const { error: e } = await client.auth.resetPasswordForEmail(String(email).trim(), { redirectTo: REDIRECT });
-  fail(e);
-}
-
-async function setPassword(password) {
-  need();
-  if (String(password).length < 8) throw new Error('Use at least 8 characters for your password');
-  const { error: e } = await client.auth.updateUser({ password });
-  fail(e);
-  recovery = false;
-  changed();
+async function signInEmail(email, password) {
+  const u = load().users.find((x) => x.email === normEmail(email));
+  // Hash even when the account doesn't exist, so both cases take the same time.
+  const key = await hashPassword(password, u?.salt || '0'.repeat(32));
+  if (!u || !crypto.timingSafeEqual(key, Buffer.from(u.hash, 'hex'))) throw new Error('Wrong email or password');
+  return startSession(u);
 }
 
 async function signOut() {
-  if (!client) return;
-  await client.auth.signOut().catch(() => {});
-  session = null;
+  load().session = null;
+  save();
   changed();
 }
 
-module.exports = {
-  REDIRECT, configured, init, state, locked, handleUrl,
-  signInEmail, signUpEmail, signInProvider, cancelPending, resetPassword, setPassword, signOut,
-};
+module.exports = { init, state, locked, signInEmail, signUpEmail, signOut };

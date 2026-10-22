@@ -1,7 +1,7 @@
 {
   "name": "umbra",
   "productName": "Umbra",
-  "version": "1.5.0",
+  "version": "1.5.1",
   "description": "Run Windows apps and games on your Mac.",
   "main": "src/main.js",
   "author": "Vini (coldvini)",
@@ -12,8 +12,7 @@
     "dist:mac-zip": "electron-builder --mac zip --arm64 --x64 --publish never"
   },
   "dependencies": {
-    "@fontsource-variable/inter": "5.2.5",
-    "@supabase/supabase-js": "2.118.0"
+    "@fontsource-variable/inter": "5.2.5"
   },
   "devDependencies": {
     "electron": "43.0.0",
@@ -33,9 +32,6 @@
       "package.json"
     ],
     "afterPack": "build/afterPack.js",
-    "protocols": [
-      { "name": "Umbra sign-in", "schemes": ["umbra"] }
-    ],
     "fileAssociations": [
       {
         "ext": ["exe", "msi", "bat"],

@@ -42,22 +42,8 @@ async function checkForUpdate() {
 app.setName('Umbra');
 if (process.env.UMBRA_HOME) app.setPath('userData', process.env.UMBRA_HOME);
 
-// Sign-in links come back from the browser as umbra://auth/callback?code=…
-if (process.defaultApp) app.setAsDefaultProtocolClient('umbra', process.execPath, [path.resolve(process.argv[1] || '.')]);
-else app.setAsDefaultProtocolClient('umbra');
 if (!app.requestSingleInstanceLock()) app.quit();
-const authUrl = (argv) => argv.find((a) => /^umbra:\/\//i.test(a));
-app.on('open-url', (e, url) => {
-  e.preventDefault();
-  auth.handleUrl(url);
-  focusMain();
-});
-app.on('second-instance', (_e, argv) => {
-  const url = authUrl(argv);
-  if (url) auth.handleUrl(url);
-  focusMain();
-});
-if (authUrl(process.argv)) auth.handleUrl(authUrl(process.argv));
+app.on('second-instance', () => focusMain());
 
 function focusMain() {
   if (!main || main.isDestroyed() || splash) return;
@@ -189,12 +175,7 @@ async function boot() {
   splashStep(74, `Loading ${store.get().bottles.length} bottle(s) and ${store.get().apps.length} app(s)`);
   runtime.refreshIcons();
   runtime.migrateSteamArgs();
-  if (auth.configured()) {
-    splashStep(82, 'Checking your account');
-    await auth.init(pushState).catch((e) => console.warn('Umbra: account init failed:', e.message));
-  } else {
-    await auth.init(pushState);
-  }
+  await auth.init(pushState);
   createMain();
   await new Promise((r) => main.once('ready-to-show', r));
   splashStep(90, 'Preparing interface');
@@ -469,10 +450,6 @@ handle('open:external', (url) => {
 
 handle('auth:email-in', (email, password) => auth.signInEmail(email, password));
 handle('auth:email-up', (email, password, name) => auth.signUpEmail(email, password, name));
-handle('auth:provider', (provider) => auth.signInProvider(provider));
-handle('auth:cancel', () => auth.cancelPending());
-handle('auth:reset', (email) => auth.resetPassword(email));
-handle('auth:set-password', (password) => auth.setPassword(password));
 handle('auth:sign-out', async () => {
   for (const id of new Set(runtime.runningList().map((r) => r.bottleId))) await runtime.kill(id).catch(() => {});
   await auth.signOut();
