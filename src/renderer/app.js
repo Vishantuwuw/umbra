@@ -184,13 +184,16 @@ function go(v) {
 // Shown until setup has finished; the welcome wizard does the actual work.
 // Apps in bottles built by another engine can't run on this one (after switching
 // engines, setup reinstalls them in a fresh bottle).
+const RECOMMENDED_ENGINE = 'Sikarugir Wine 11';
 const fitsEngine = (a) => (S.bottles.find((b) => b.id === a.bottleId)?.engineKind || 'wine') === S.engineKind;
 
 function engineBanner() {
   const busy = S.tasks.find((t) => t.id === 'setup');
   const upgrading = S.tasks.find((t) => t.id === 'engine');
-  if (S.platform === 'darwin' && S.engine && S.engineKind === 'cx' && !busy) {
-    return `<div class="banner"><div class="badge-icon">${icon('bolt')}</div><div class="grow"><b>${upgrading ? 'Installing the recommended engine…' : 'Switch to the recommended engine'}</b><span>${upgrading ? esc(taskPct.engine?.detail || upgrading.detail) : 'Steam doesn’t start on the CrossOver engine (error 0x3008). The recommended engine (Wine 11) runs it. Setup then reinstalls Steam with it.'}</span></div>
+  if (S.platform === 'darwin' && S.engine && S.engine.source !== RECOMMENDED_ENGINE && !busy) {
+    const why = S.engineKind === 'cx' ? 'Steam doesn’t start on the CrossOver engine (error 0x3008). Setup then reinstalls Steam with the new engine.'
+      : 'Wine 11 with Metal support, so games that need DirectX 11 can start. Your apps and Steam stay as they are.';
+    return `<div class="banner"><div class="badge-icon">${icon('bolt')}</div><div class="grow"><b>${upgrading ? 'Installing the recommended engine…' : 'Switch to the recommended engine'}</b><span>${upgrading ? esc(taskPct.engine?.detail || upgrading.detail) : why}</span></div>
       <button class="btn glow" data-act="upgrade-engine" ${upgrading ? 'disabled' : ''}>${upgrading ? `${Math.round((taskPct.engine?.pct ?? 0) * 100)}%` : `${icon('download')}Switch`}</button></div>`;
   }
   if (S.settings.setupDone && S.engine && S.bottles.length && !(S.cpu.appleSilicon && !S.cpu.rosetta)) return '';
@@ -381,7 +384,7 @@ function viewSettings() {
       </dl>
       <div style="display:flex;gap:10px;flex-wrap:wrap">
         ${t ? `<button class="btn glow" disabled>Installing… ${pct}%</button>`
-          : `<button class="btn ${e ? '' : 'glow'}" data-act="install-engine" ${S.platform === 'darwin' ? '' : 'disabled'}>${icon('download')}${e && S.engineKind !== 'cx' ? 'Reinstall Engine' : 'Install Recommended Engine'}</button>`}
+          : `<button class="btn ${e ? '' : 'glow'}" data-act="install-engine" ${S.platform === 'darwin' ? '' : 'disabled'}>${icon('download')}${e && e.source === RECOMMENDED_ENGINE ? 'Reinstall Engine' : 'Install Recommended Engine'}</button>`}
         <button class="btn" data-act="choose-engine">${icon('file')}Use Custom Wine…</button>
         ${s.enginePath ? '<button class="btn ghost" data-act="reset-engine">Reset to automatic</button>' : ''}
         ${S.cpu.appleSilicon && !S.cpu.rosetta ? '<button class="btn glow" data-act="rosetta">Install Rosetta</button>' : ''}
@@ -879,8 +882,11 @@ const actions = {
   },
   'upgrade-engine': async () => {
     await call('engine:install');
-    toast('Engine installed. Now let’s set things up with it.');
-    openWizard();
+    // Moving between Wine 11 builds keeps the same bottles; only a new kind needs setup.
+    setTimeout(() => {
+      if (S.settings.setupDone) toast('Engine installed. Open Steam once so it can set up games for the new engine.');
+      else { toast('Engine installed. Now let’s set things up with it.'); openWizard(); }
+    }, 600);
   },
   'install-engine': async () => {
     go('settings');

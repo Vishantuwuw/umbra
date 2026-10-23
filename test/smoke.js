@@ -34,7 +34,7 @@ app.whenReady().then(async () => {
     console.log(`${src}:`, await engine[src]().catch((e) => `unavailable (${e.message})`));
   }
   let eng = await engine.detect(null);
-  if (!eng || (process.platform === 'darwin' && !/^(Umbra|CrossOver) engine$/.test(eng.source))) {
+  if (!eng || (process.platform === 'darwin' && !/^(Umbra engine|CrossOver engine|Sikarugir Wine 11)$/.test(eng.source))) {
     let last = -1;
     eng = await engine.install((f, label) => {
       const step = Math.floor((f ?? 0) * 20);
@@ -106,8 +106,10 @@ app.whenReady().then(async () => {
     try { await fn(); console.log(`PASS: ${label}`); } catch (e) { console.log(`WARN: ${label} failed: ${e.message}`); }
   }
   await d3d11('DXVK').catch((e) => console.log(`WARN: D3D11 test failed: ${e.message}`));
-  try { await runtime.setDxmt(b.id, true, progress()); console.log('PASS: DXMT installed'); } catch (e) { console.log(`WARN: DXMT failed: ${e.message}`); }
-  await d3d11('DXMT').catch((e) => console.log(`WARN: D3D11 test failed: ${e.message}`));
+  for (const source of ['release', 'bundled']) {
+    try { await runtime.setDxmt(b.id, true, progress(), { source }); console.log(`PASS: DXMT (${source}) installed`); } catch (e) { console.log(`WARN: DXMT (${source}) failed: ${e.message}`); continue; }
+    await d3d11(`DXMT ${source}`).catch((e) => console.log(`WARN: D3D11 test failed: ${e.message}`));
+  }
 
   // Steam: install it, launch it and report what its own logs say (diagnostic, not fatal).
   if (process.env.STEAM_TEST !== '0') {

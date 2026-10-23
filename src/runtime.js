@@ -88,7 +88,7 @@ function cxEnv({ root, frameworks: fw }) {
 
 // Bottles remember which kind of engine built them; the CrossOver engine and plain
 // Wine lay out a prefix differently, so they aren't mixed.
-const engineKind = () => (wine?.cx ? 'cx' : 'wine');
+const engineKind = () => (wine?.cx?.kind === 'cx' ? 'cx' : 'wine');
 const bottleKind = (b) => b.engineKind || 'wine';
 
 // Runs wine with args and resolves when it exits; output is streamed to the console.
@@ -283,7 +283,9 @@ function copyAsNative(from, to) {
   fs.writeFileSync(to, buf);
 }
 
-async function setDxmt(bottleId, on, onProgress = () => {}) {
+// source: 'release' (DXMT's own build), 'bundled' (the one Sikarugir ships next to its
+// engine, in Frameworks/renderer/dxmt) or 'auto' (bundled when the engine has it).
+async function setDxmt(bottleId, on, onProgress = () => {}, { source = 'auto' } = {}) {
   const b = bottle(bottleId);
   const key = 'HKCU\\Software\\Wine\\DllOverrides';
   if (!on) {
@@ -296,16 +298,25 @@ async function setDxmt(bottleId, on, onProgress = () => {}) {
   const bin = requireEngine();
   const libDir = findDir(path.dirname(path.dirname(bin)), 'x86_64-unix', 4);
   if (!libDir) throw new Error('This Wine engine has no x86_64-unix library folder, so DXMT can’t be added');
-  const archive = path.join(engine.cacheDir(), path.basename(DXMT.url));
-  if (!fs.existsSync(archive)) await engine.download(DXMT.url, archive, (f) => onProgress(0.05 + (f ?? 0) * 0.6, `Downloading DXMT ${DXMT.version}…`));
-  onProgress(0.7, 'Installing DXMT…');
+  const bundled = wine?.cx && path.join(wine.cx.frameworks, 'renderer', 'dxmt', 'wine');
+  const useBundled = source === 'bundled' || (source === 'auto' && bundled && fs.existsSync(bundled));
+  let version = DXMT.version;
   const tmp = path.join(engine.cacheDir(), 'dxmt-unpack');
   fs.rmSync(tmp, { recursive: true, force: true });
   fs.mkdirSync(tmp, { recursive: true });
-  await engine.exec('tar', ['-xf', archive, '-C', tmp]).catch((e) => {
-    fs.rmSync(archive, { force: true });
-    throw new Error(`Could not unpack DXMT, so the download was deleted. Try again. (${e.message})`);
-  });
+  if (useBundled) {
+    if (!bundled || !fs.existsSync(bundled)) throw new Error('This engine doesn’t come with DXMT');
+    fs.cpSync(bundled, tmp, { recursive: true });
+    try { version = fs.readFileSync(path.join(bundled, '..', 'version'), 'utf8').trim(); } catch { version = 'bundled'; }
+  } else {
+    const archive = path.join(engine.cacheDir(), path.basename(DXMT.url));
+    if (!fs.existsSync(archive)) await engine.download(DXMT.url, archive, (f) => onProgress(0.05 + (f ?? 0) * 0.6, `Downloading DXMT ${DXMT.version}…`));
+    await engine.exec('tar', ['-xf', archive, '-C', tmp]).catch((e) => {
+      fs.rmSync(archive, { force: true });
+      throw new Error(`Could not unpack DXMT, so the download was deleted. Try again. (${e.message})`);
+    });
+  }
+  onProgress(0.7, 'Installing DXMT…');
   const src = (arch) => findDir(tmp, arch, 3);
   if (!src('x86_64-unix') || !src('x86_64-windows')) throw new Error('The DXMT download is missing its files');
   // winemetal is DXMT's bridge between Windows and Metal: its Unix half lives in the engine.
@@ -323,9 +334,10 @@ async function setDxmt(bottleId, on, onProgress = () => {}) {
   }
   fs.rmSync(tmp, { recursive: true, force: true });
   for (const dll of DXMT_DLLS) await wineRun(b, ['reg', 'add', key, '/v', dll, '/t', 'REG_SZ', '/d', 'native,builtin', '/f']);
-  b.dxmt = DXMT.version;
+  b.dxmt = version;
+  b.dxmtEngine = wine?.path;
   store.save();
-  log(`DXMT ${DXMT.version} (Direct3D 11 → Metal) enabled in “${b.name}”`);
+  log(`DXMT ${version} (Direct3D 11 → Metal) enabled in “${b.name}”`);
   onProgress(1, 'DXMT enabled');
 }
 
@@ -1195,7 +1207,9 @@ function installSteam(onProgress) {
 // and its sign-in and store pages use Wine's web engine (Gecko).
 const STEAM_NEEDS = ['vcrun', 'wineaddons'];
 const STEAM_GFX = 3;
-const steamNeedsRuntimes = (bottleId) => STEAM_NEEDS.some((c) => !bottle(bottleId).components?.[c]) || bottle(bottleId).steamGfx !== STEAM_GFX;
+// DXMT's bridge is installed into the engine itself, so a new engine needs it again.
+const steamGfxStale = (b) => b.steamGfx !== STEAM_GFX || (process.platform === 'darwin' && b.dxmtEngine !== wine?.path);
+const steamNeedsRuntimes = (bottleId) => STEAM_NEEDS.some((c) => !bottle(bottleId).components?.[c]) || steamGfxStale(bottle(bottleId));
 
 // Games in Steam's bottle get DXMT (see setDxmt): Wine's built-in Direct3D 11 can't start
 // Unity and most current games on a Mac ("Failed to initialize graphics... make sure you
@@ -1203,8 +1217,11 @@ const steamNeedsRuntimes = (bottleId) => STEAM_NEEDS.some((c) => !bottle(bottleI
 // with DXVK on the Mac test, so steam.exe and steamwebhelper.exe always use Wine's
 // built-in Direct3D.
 async function steamGraphics(b) {
-  if (!b.dxmt) {
-    try { await setDxmt(b.id, true); } catch (e) { log(`Couldn’t turn on DXMT for Steam games: ${e.message}`, 'warn'); }
+  if (process.platform === 'darwin' && b.dxmtEngine !== wine?.path) {
+    try { await setDxmt(b.id, true); } catch (e) {
+      b.dxmtEngine = wine?.path; // don't retry on every launch
+      log(`Couldn’t turn on DXMT for Steam games: ${e.message}`, 'warn');
+    }
   }
   for (const exe of ['steam.exe', 'steamwebhelper.exe']) {
     const key = `HKCU\\Software\\Wine\\AppDefaults\\${exe}\\DllOverrides`;
@@ -1221,7 +1238,7 @@ async function ensureSteamRuntimes(bottleId, onProgress = () => {}) {
   for (const [i, c] of missing.entries()) {
     await installComponent(bottleId, c, (f, l) => onProgress((i + (f ?? 0)) / missing.length, l));
   }
-  if (bottle(bottleId).steamGfx !== STEAM_GFX) await steamGraphics(bottle(bottleId));
+  if (steamGfxStale(bottle(bottleId))) await steamGraphics(bottle(bottleId));
 }
 
 async function doInstallSteam(onProgress) {

@@ -11,6 +11,9 @@ const RELEASES_API = 'https://api.github.com/repos/Gcenx/macOS_Wine_builds/relea
 // CrossOver's Wine (CodeWeavers' open-source tree, the engine inside CrossOver), as packaged
 // by the Sikarugir/Wineskin project, plus the Mac libraries it loads at runtime.
 const CX_ENGINE = { version: '24.0.7', url: 'https://github.com/Sikarugir-App/Engines/releases/download/v1.0/WS12WineCX24.0.7_7.tar.xz' };
+// Sikarugir's Wine 11: the same Wine as Umbra's plain engine, plus the Metal hooks
+// (CrossOver-style macdrv_functions) that DXMT needs to draw Direct3D 11 games.
+const SK_ENGINE = { version: '11.0_1', url: 'https://github.com/Sikarugir-App/Engines/releases/download/v1.0/WS12WineSikarugir11.0_1.tar.xz' };
 const CX_LIBS = { url: 'https://github.com/Sikarugir-App/Wrapper/releases/download/v1.0/Template-1.0.tar.xz', dir: 'Template-1.0.app/Contents/Frameworks' };
 const BREW_CASK_API = 'https://formulae.brew.sh/api/cask';
 const EXTRA_PATH = ['/opt/homebrew/bin', '/usr/local/bin', '/opt/local/bin', '/usr/bin', '/bin', '/usr/sbin', '/sbin'];
@@ -21,6 +24,10 @@ function engineDir() {
 
 function cxDir() {
   return path.join(app.getPath('userData'), 'engine-cx');
+}
+
+function skDir() {
+  return path.join(app.getPath('userData'), 'engine-sk');
 }
 
 function cacheDir() {
@@ -81,6 +88,7 @@ function findWineIn(root, depth = 7) {
 function candidates() {
   const home = os.homedir();
   const list = [
+    { source: 'Sikarugir Wine 11', find: () => pickInBin(path.join(skDir(), 'wine', 'bin')) },
     { source: 'Umbra engine', find: () => findWineIn(engineDir()) },
     { source: 'CrossOver engine', find: () => pickInBin(path.join(cxDir(), 'wine', 'bin')) },
   ];
@@ -107,10 +115,15 @@ function hasD3DMetal(bin) {
 
 // CrossOver's engine loads freetype, gnutls, MoltenVK and friends from a separate
 // Frameworks folder; runtime.wineEnv points the loader there.
+// kind 'cx' (WineCX 24) builds bottles that other engines can't share; Sikarugir's Wine 11
+// counts as plain Wine 11, so bottles carry over between it and Umbra's plain engine.
 function cxInfo(bin) {
-  const root = cxDir();
-  if (!path.resolve(bin).startsWith(path.join(root, 'wine') + path.sep)) return null;
-  return { root: path.join(root, 'wine'), frameworks: path.join(root, 'Frameworks') };
+  for (const [root, kind] of [[cxDir(), 'cx'], [skDir(), 'wine']]) {
+    if (path.resolve(bin).startsWith(path.join(root, 'wine') + path.sep)) {
+      return { root: path.join(root, 'wine'), frameworks: path.join(root, 'Frameworks'), kind };
+    }
+  }
+  return null;
 }
 
 async function describe(p, source) {
@@ -217,10 +230,10 @@ async function download(url, dest, onProgress, { signal } = {}) {
 }
 
 // Which Wine build flavor to prefer; UMBRA_ENGINE_FLAVOR=devel|staging puts that one first.
-// Plain Wine (11.x) is the default: on the Mac test Steam reaches its sign-in window
-// on it, while the CrossOver engine (WineCX 24, based on Wine 9) stops with error
-// 0x3008. UMBRA_ENGINE_FLAVOR=cx installs the CrossOver engine instead.
-const wantsCx = () => process.env.UMBRA_ENGINE_FLAVOR === 'cx';
+// Sikarugir's Wine 11 is the default: Steam runs on Wine 11 (the CrossOver engine,
+// WineCX 24 based on Wine 9, stops with error 0x3008), and its Metal hooks let DXMT run
+// Direct3D 11 games. UMBRA_ENGINE_FLAVOR=cx installs the CrossOver engine instead, and
+// stable|staging|devel a plain Gcenx Wine build.
 
 function flavorOrder() {
   const order = ['stable', 'staging', 'devel'];
@@ -274,8 +287,11 @@ async function latestRelease() {
 let engineInstall = null;
 
 // Setup and the Engine page can both start an install; share one instead of racing.
-function install(onProgress, { cx = wantsCx() } = {}) {
-  engineInstall ||= (cx ? installCx(onProgress) : doInstall(onProgress)).finally(() => { engineInstall = null; });
+function install(onProgress, { flavor = process.env.UMBRA_ENGINE_FLAVOR } = {}) {
+  const run = flavor === 'cx' ? () => installBundle(CX_ENGINE, cxDir(), 'the CrossOver engine', onProgress)
+    : ['stable', 'staging', 'devel'].includes(flavor) ? () => doInstall(onProgress)
+      : () => installBundle(SK_ENGINE, skDir(), 'Wine 11 with Metal support', onProgress);
+  engineInstall ||= run().finally(() => { engineInstall = null; });
   return engineInstall;
 }
 
@@ -290,13 +306,13 @@ async function fetchArchive(url, label, onProgress) {
   return archive;
 }
 
-// Downloads CrossOver's Wine and its libraries into Umbra's engine-cx folder.
-async function installCx(onProgress) {
-  if (process.platform !== 'darwin') throw new Error('The CrossOver engine is macOS-only');
-  const engineTar = await fetchArchive(CX_ENGINE.url, 'the CrossOver engine', (f, l) => onProgress(0.01 + (f ?? 0) * 0.55, l));
+// Downloads a Sikarugir-packaged Wine (wswine.bundle) and the Mac libraries it loads at
+// runtime (from Sikarugir's app template) into dir/wine and dir/Frameworks.
+async function installBundle(eng, dir, label, onProgress) {
+  if (process.platform !== 'darwin') throw new Error(`${label} is macOS-only`);
+  const engineTar = await fetchArchive(eng.url, label, (f, l) => onProgress(0.01 + (f ?? 0) * 0.55, l));
   const libsTar = await fetchArchive(CX_LIBS.url, 'engine libraries', (f, l) => onProgress(0.56 + (f ?? 0) * 0.3, l));
-  onProgress(0.87, 'Unpacking the CrossOver engine…');
-  const dir = cxDir();
+  onProgress(0.87, `Unpacking ${label}…`);
   const staging = `${dir}.new`;
   fs.rmSync(staging, { recursive: true, force: true });
   fs.mkdirSync(path.join(staging, 'wine'), { recursive: true });
@@ -306,14 +322,14 @@ async function installCx(onProgress) {
     await exec('/usr/bin/tar', ['-xJf', libsTar, '-C', path.join(staging, 'Frameworks'), '--strip-components', '3', CX_LIBS.dir], { timeout: 10 * 60 * 1000 });
   } catch (e) {
     for (const f of [engineTar, libsTar, staging]) fs.rmSync(f, { recursive: true, force: true });
-    throw new Error(`Could not unpack the CrossOver engine, so the download was deleted. Try again. (${e.message})`);
+    throw new Error(`Could not unpack ${label}, so the download was deleted. Try again. (${e.message})`);
   }
   await exec('/usr/bin/xattr', ['-dr', 'com.apple.quarantine', staging]).catch(() => {});
-  if (!pickInBin(path.join(staging, 'wine', 'bin'))) throw new Error('The CrossOver engine download did not contain Wine');
+  if (!pickInBin(path.join(staging, 'wine', 'bin'))) throw new Error(`The ${label} download did not contain Wine`);
   fs.rmSync(dir, { recursive: true, force: true });
   fs.renameSync(staging, dir);
-  for (const f of [engineTar, libsTar]) fs.rmSync(f, { force: true });
-  onProgress(1, `Installed the CrossOver engine (WineCX ${CX_ENGINE.version})`);
+  fs.rmSync(engineTar, { force: true });
+  onProgress(1, `Installed ${label} (${eng.version})`);
   return detect(null);
 }
 
@@ -356,4 +372,4 @@ async function doInstall(onProgress) {
   return detect(null);
 }
 
-module.exports = { detect, detectAll, install, installCx, cxDir, githubRelease, brewRelease, download, cpu, installRosetta, wineserverFor, envPath, exec, cacheDir };
+module.exports = { detect, detectAll, install, cxDir, skDir, githubRelease, brewRelease, download, cpu, installRosetta, wineserverFor, envPath, exec, cacheDir };
