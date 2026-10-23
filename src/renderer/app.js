@@ -184,15 +184,14 @@ function go(v) {
 // Shown until setup has finished; the welcome wizard does the actual work.
 // Apps in bottles built by another engine can't run on this one (after switching
 // engines, setup reinstalls them in a fresh bottle).
-const RECOMMENDED_ENGINE = 'Sikarugir Wine 11';
+const RECOMMENDED_ENGINE = 'CrossOver engine';
 const fitsEngine = (a) => (S.bottles.find((b) => b.id === a.bottleId)?.engineKind || 'wine') === S.engineKind;
 
 function engineBanner() {
   const busy = S.tasks.find((t) => t.id === 'setup');
   const upgrading = S.tasks.find((t) => t.id === 'engine');
   if (S.platform === 'darwin' && S.engine && S.engine.source !== RECOMMENDED_ENGINE && !busy) {
-    const why = S.engineKind === 'cx' ? 'Steam doesn’t start on the CrossOver engine (error 0x3008). Setup then reinstalls Steam with the new engine.'
-      : 'Wine 11 with Metal support, so games that need DirectX 11 can start. Your apps and Steam stay as they are.';
+    const why = 'CrossOver’s engine with DirectX 11 → Metal, so games like Unity ones can start. Setup then reinstalls Steam with it.';
     return `<div class="banner"><div class="badge-icon">${icon('bolt')}</div><div class="grow"><b>${upgrading ? 'Installing the recommended engine…' : 'Switch to the recommended engine'}</b><span>${upgrading ? esc(taskPct.engine?.detail || upgrading.detail) : why}</span></div>
       <button class="btn glow" data-act="upgrade-engine" ${upgrading ? 'disabled' : ''}>${upgrading ? `${Math.round((taskPct.engine?.pct ?? 0) * 100)}%` : `${icon('download')}Switch`}</button></div>`;
   }
