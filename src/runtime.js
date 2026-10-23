@@ -1240,7 +1240,7 @@ async function installMissing(b, list, onProgress) {
     }
   }
 }
-const STEAM_GFX = 3;
+const STEAM_GFX = 4;
 // DXMT's bridge is installed into the engine itself, so a new engine needs it again.
 const steamGfxStale = (b) => b.steamGfx !== STEAM_GFX || (process.platform === 'darwin' && b.dxmtEngine !== wine?.path);
 const steamNeedsRuntimes = (bottleId) => missingFor(bottle(bottleId), STEAM_NEEDS).length > 0 || steamGfxStale(bottle(bottleId));
@@ -1301,6 +1301,11 @@ async function steamGraphics(b) {
       await wineRun(b, ['reg', 'add', key, '/v', dll, '/d', 'builtin', '/f']);
     }
   }
+  // Steam restarts its browser (steamwebhelper) by itself when it crashes, which kills the
+  // crashed copy while Wine's "Program Error" window is still up: the window can't even show
+  // its details. Wine's crash window is off in Steam's bottle; Umbra still reports programs
+  // that crash right away or print an error (see crashText).
+  await wineRun(b, ['reg', 'add', 'HKCU\\Software\\Wine\\WineDbg', '/v', 'ShowCrashDialog', '/t', 'REG_DWORD', '/d', '0', '/f']);
   b.steamGfx = STEAM_GFX;
   store.save();
 }
