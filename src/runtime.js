@@ -88,7 +88,7 @@ function cxEnv({ root, frameworks: fw }) {
 
 // Bottles remember which kind of engine built them; the CrossOver engine and plain
 // Wine lay out a prefix differently, so they aren't mixed.
-const engineKind = () => (wine?.cx?.kind === 'cx' ? 'cx' : 'wine');
+const engineKind = () => wine?.cx?.kind || 'wine';
 const bottleKind = (b) => b.engineKind || 'wine';
 
 // Runs wine with args and resolves when it exits; output is streamed to the console.
@@ -373,7 +373,7 @@ function launch({ bottleId, file, args = '', appId = null, name, steamAttempt = 
   const b = bottle(bottleId);
   if (!fs.existsSync(file)) throw new Error(`File not found: ${file}`);
   if (bottleKind(b) !== engineKind()) {
-    throw new Error(`“${b.name}” was set up with ${bottleKind(b) === 'cx' ? 'the CrossOver engine' : 'the Wine 11 engine'}. Run setup again (Settings → Run Setup Again) and reinstall this app there.`);
+    throw new Error(`“${b.name}” was set up with ${{ cx: 'the CrossOver engine', sk: 'Sikarugir Wine 10' }[bottleKind(b)] || 'the Wine 11 engine'}. Run setup again (Settings → Run Setup Again) and reinstall this app there.`);
   }
   const runId = ++runSeq;
   const label = name || path.basename(file);

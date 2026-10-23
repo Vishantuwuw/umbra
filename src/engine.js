@@ -11,9 +11,10 @@ const RELEASES_API = 'https://api.github.com/repos/Gcenx/macOS_Wine_builds/relea
 // CrossOver's Wine (CodeWeavers' open-source tree, the engine inside CrossOver), as packaged
 // by the Sikarugir/Wineskin project, plus the Mac libraries it loads at runtime.
 const CX_ENGINE = { version: '24.0.7', url: 'https://github.com/Sikarugir-App/Engines/releases/download/v1.0/WS12WineCX24.0.7_7.tar.xz' };
-// Sikarugir's Wine 11: the same Wine as Umbra's plain engine, plus the Metal hooks
-// (CrossOver-style macdrv_functions) that DXMT needs to draw Direct3D 11 games.
-const SK_ENGINE = { version: '11.0_1', url: 'https://github.com/Sikarugir-App/Engines/releases/download/v1.0/WS12WineSikarugir11.0_1.tar.xz' };
+// Sikarugir's Wine 10: Steam draws on Wine 10 (Steam can't connect on WineCX 24, which
+// is Wine 9), and the build exposes the Mac driver's Metal hooks (macdrv_functions) that
+// DXMT needs for Direct3D 11 games. Sikarugir's Wine 11 failed to start wineboot.
+const SK_ENGINE = { version: '10.0_7', url: 'https://github.com/Sikarugir-App/Engines/releases/download/v1.0/WS12WineSikarugir10.0_7.tar.xz' };
 const CX_LIBS = { url: 'https://github.com/Sikarugir-App/Wrapper/releases/download/v1.0/Template-1.0.tar.xz', dir: 'Template-1.0.app/Contents/Frameworks' };
 const BREW_CASK_API = 'https://formulae.brew.sh/api/cask';
 const EXTRA_PATH = ['/opt/homebrew/bin', '/usr/local/bin', '/opt/local/bin', '/usr/bin', '/bin', '/usr/sbin', '/sbin'];
@@ -88,8 +89,8 @@ function findWineIn(root, depth = 7) {
 function candidates() {
   const home = os.homedir();
   const list = [
+    { source: 'Sikarugir Wine 10', find: () => pickInBin(path.join(skDir(), 'wine', 'bin')) },
     { source: 'CrossOver engine', find: () => pickInBin(path.join(cxDir(), 'wine', 'bin')) },
-    { source: 'Sikarugir Wine 11', find: () => pickInBin(path.join(skDir(), 'wine', 'bin')) },
     { source: 'Umbra engine', find: () => findWineIn(engineDir()) },
   ];
   // Engines with Apple's D3DMetal (DirectX 11/12 → Metal), from Whisky or the Game Porting Toolkit.
@@ -115,10 +116,10 @@ function hasD3DMetal(bin) {
 
 // CrossOver's engine loads freetype, gnutls, MoltenVK and friends from a separate
 // Frameworks folder; runtime.wineEnv points the loader there.
-// kind 'cx' (WineCX 24) builds bottles that other engines can't share; Sikarugir's Wine 11
-// counts as plain Wine 11, so bottles carry over between it and Umbra's plain engine.
+// Bottles built by one Wine version aren't run by another, so each engine family has a
+// kind: 'cx' (WineCX 24), 'sk' (Sikarugir Wine 10) and 'wine' (Umbra's plain Wine 11).
 function cxInfo(bin) {
-  for (const [root, kind] of [[cxDir(), 'cx'], [skDir(), 'wine']]) {
+  for (const [root, kind] of [[cxDir(), 'cx'], [skDir(), 'sk']]) {
     if (path.resolve(bin).startsWith(path.join(root, 'wine') + path.sep)) {
       return { root: path.join(root, 'wine'), frameworks: path.join(root, 'Frameworks'), kind };
     }
@@ -230,11 +231,9 @@ async function download(url, dest, onProgress, { signal } = {}) {
 }
 
 // Which Wine build flavor to prefer; UMBRA_ENGINE_FLAVOR=devel|staging puts that one first.
-// The CrossOver engine (WineCX 24) is the default: DXMT, which runs Direct3D 11 games
-// through Metal, needs the Mac driver hooks CrossOver's Wine has (Gcenx's Wine 11 hides
-// them, and Sikarugir's Wine 11 failed to start wineboot on the Mac test). Steam runs on
-// it with the steamwebhelper wrapper. UMBRA_ENGINE_FLAVOR=sikarugir|stable|staging|devel
-// picks another engine.
+// Sikarugir's Wine 10 is the default (see SK_ENGINE). UMBRA_ENGINE_FLAVOR=cx installs the
+// CrossOver engine (Direct3D 11 works, Steam can't connect), stable|staging|devel a plain
+// Gcenx Wine 11 (Steam works, Direct3D 11 games don't).
 function flavorOrder() {
   const order = ['stable', 'staging', 'devel'];
   const want = process.env.UMBRA_ENGINE_FLAVOR;
@@ -288,9 +287,9 @@ let engineInstall = null;
 
 // Setup and the Engine page can both start an install; share one instead of racing.
 function install(onProgress, { flavor = process.env.UMBRA_ENGINE_FLAVOR } = {}) {
-  const run = flavor === 'sikarugir' ? () => installBundle(SK_ENGINE, skDir(), 'Sikarugir Wine 11', onProgress)
+  const run = flavor === 'cx' ? () => installBundle(CX_ENGINE, cxDir(), 'the CrossOver engine', onProgress)
     : ['stable', 'staging', 'devel'].includes(flavor) ? () => doInstall(onProgress)
-      : () => installBundle(CX_ENGINE, cxDir(), 'the CrossOver engine', onProgress);
+      : () => installBundle(SK_ENGINE, skDir(), 'Sikarugir Wine 10', onProgress);
   engineInstall ||= run().finally(() => { engineInstall = null; });
   return engineInstall;
 }
