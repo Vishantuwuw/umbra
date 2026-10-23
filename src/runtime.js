@@ -68,6 +68,10 @@ function wineEnv(b, extra = {}) {
     WINEDLLOVERRIDES: 'winemenubuilder.exe=d',
     WINEMSYNC: s.msync ? '1' : '0',
     WINEESYNC: s.esync ? '1' : '0',
+    // .NET apps built on Microsoft.Extensions.Hosting log to the Windows Event Log, which
+    // doesn't work under Wine and crashed a WPF app ("An error occurred while writing to
+    // logger(s)"); this standard setting switches that logger off for every app.
+    Logging__EventLog__LogLevel__Default: 'None',
     ...extra,
   };
   if (s.metalHud) env.MTL_HUD_ENABLED = '1';
@@ -878,7 +882,7 @@ async function createMacLauncher(id) {
   fs.mkdirSync(path.join(contents, 'MacOS'), { recursive: true });
   fs.mkdirSync(path.join(contents, 'Resources'), { recursive: true });
   const env = wineEnv(b, a.hud ? { MTL_HUD_ENABLED: '1' } : {});
-  const keep = ['WINEPREFIX', 'WINEDEBUG', 'WINEDLLOVERRIDES', 'WINEMSYNC', 'WINEESYNC', 'MTL_HUD_ENABLED', 'PATH', 'DYLD_FALLBACK_LIBRARY_PATH', 'CX_ROOT', 'MVK_CONFIG_RESUME_LOST_DEVICE', 'ROSETTA_ADVERTISE_AVX'];
+  const keep = ['WINEPREFIX', 'WINEDEBUG', 'WINEDLLOVERRIDES', 'WINEMSYNC', 'WINEESYNC', 'MTL_HUD_ENABLED', 'PATH', 'DYLD_FALLBACK_LIBRARY_PATH', 'CX_ROOT', 'MVK_CONFIG_RESUME_LOST_DEVICE', 'ROSETTA_ADVERTISE_AVX', 'Logging__EventLog__LogLevel__Default'];
   const script = [
     '#!/bin/sh',
     `# Launches “${a.name}” from the Umbra bottle “${b.name}”.`,
