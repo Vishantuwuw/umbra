@@ -102,14 +102,14 @@ function wineRun(b, args, { env = {}, cwd, tag } = {}) {
   });
 }
 
-function pipe(child, tag) {
+function pipe(child, tag, onLine = () => {}) {
   for (const [stream, level] of [[child.stdout, 'info'], [child.stderr, 'warn']]) {
     let buf = '';
     stream.on('data', (d) => {
       buf += d.toString();
       const lines = buf.split('\n');
       buf = lines.pop();
-      for (const l of lines) if (l.trim()) log(`[${tag}] ${l}`, level);
+      for (const l of lines) if (l.trim()) { log(`[${tag}] ${l}`, level); onLine(l); }
     });
   }
 }
@@ -393,7 +393,9 @@ function launch({ bottleId, file, args = '', appId = null, name, steamAttempt = 
   const child = spawn(bin, [...argsFor(file), ...splitArgs(args)], { env: wineEnv(b, appEntry?.hud ? { MTL_HUD_ENABLED: '1' } : {}), cwd: path.dirname(file) });
   const entry = { runId, appId, bottleId, name: label, started: Date.now(), pid: child.pid, exe: file };
   running.set(runId, { ...entry, child });
-  pipe(child, label);
+  // The last lines a program printed, to explain a crash (.NET prints its error there).
+  const tail = [];
+  pipe(child, label, (l) => { tail.push(l); if (tail.length > 300) tail.shift(); });
   log(`▶ Launching ${label} in “${b.name}”`);
   store.get().settings.lastBottleId = bottleId;
   if (appId) {
@@ -415,7 +417,9 @@ function launch({ bottleId, file, args = '', appId = null, name, steamAttempt = 
     emit('running');
     // steam.exe often exits early while Steam keeps starting; watchSteam reports real failures.
     const isSteam = /^steam\.exe$/i.test(path.basename(file));
-    if (code && !stopped && !installer && !isSteam && secs < 6) emit('crashed', { name: label, code });
+    const detail = code && !stopped ? crashText(tail) : '';
+    if (detail) emit('crashed', { name: label, code, detail });
+    else if (code && !stopped && !installer && !isSteam && secs < 6) emit('crashed', { name: label, code });
     if (installer) trackInstall(b, before, label).catch((e) => log(`Could not detect installed apps: ${e.message}`, 'warn'));
     if (/^steam\.exe$/i.test(path.basename(file))) {
       const added = importSteamGames(b.id);
@@ -565,6 +569,14 @@ function startWindowFix(b) {
   } catch (e) {
     log(`Couldn’t start the Steam window fix: ${e.message}`, 'warn');
   }
+}
+
+// The error a crashed program printed: .NET's "Unhandled exception." with its stack, or
+// Wine's report of a crash. Empty when there's nothing readable.
+function crashText(lines) {
+  const i = lines.findIndex((l) => /Unhandled exception\.|Unhandled Exception:|Fatal error\./.test(l));
+  if (i < 0) return '';
+  return lines.slice(i, i + 25).map((l) => l.replace(/^[0-9a-f]{4}:(err|fixme|warn):\S+ /, '')).join('\n').slice(0, 4000);
 }
 
 function runningList() {

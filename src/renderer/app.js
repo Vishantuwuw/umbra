@@ -1016,8 +1016,17 @@ api.on('menu', (name) => {
   if (name.startsWith('nav:')) return go(name.slice(4));
   actions[name]?.();
 });
-api.on('crashed', ({ name, code }) => {
-  toast(`${name} closed right away (code ${code}). It may need Visual C++ or .NET: open Bottles → Components. The Console has details.`, 'error');
+api.on('crashed', ({ name, code, detail }) => {
+  if (!detail) {
+    toast(`${name} closed right away (code ${code}). It may need Visual C++ or .NET: open Bottles → Components. The Console has details.`, 'error');
+    return;
+  }
+  // Show the program's own error message, so there's no digging through the Console.
+  modal(`<h3>${esc(name)} crashed</h3><p class="muted">This is the error it reported. Copy it and send it to whoever made the program (or to Umbra's support).</p>
+    <pre class="crash-text">${esc(detail)}</pre>
+    <div class="modal-actions"><button class="btn" id="c-copy">${icon('file')}Copy error</button><button class="btn primary" data-close>Close</button></div>`, (el, close) => {
+    $('#c-copy', el).onclick = () => { navigator.clipboard.writeText(detail).then(() => toast('Error copied')); };
+  });
 });
 api.on('steam-failed', ({ lastLine }) => {
   toast(`Steam couldn’t start after 3 tries${lastLine ? ` (“${lastLine}”)` : ''}. Open Steam’s settings and choose Repair Steam, or check the Console.`, 'error');
