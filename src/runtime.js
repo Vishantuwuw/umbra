@@ -1132,13 +1132,18 @@ function installSteam(onProgress) {
 // Steam won't start without the Visual C++ runtimes ("Steam needs Microsoft Visual C++…"),
 // and its sign-in and store pages use Wine's web engine (Gecko).
 const STEAM_NEEDS = ['vcrun', 'wineaddons'];
-const STEAM_GFX = 1;
+const STEAM_GFX = 2;
 const steamNeedsRuntimes = (bottleId) => STEAM_NEEDS.some((c) => !bottle(bottleId).components?.[c]) || bottle(bottleId).steamGfx !== STEAM_GFX;
 
-// Steam's sign-in and main windows draw through Direct3D 11. With DXVK on (Faster
-// graphics) they came up blank on the Mac test: Wine had the window on screen but nothing
-// was drawn. Steam's own processes always use Wine's built-in Direct3D instead.
+// Games in Steam's bottle get DXVK (Faster graphics): Wine's built-in Direct3D 11 can't
+// start Unity and most current games on a Mac ("Failed to initialize graphics... make
+// sure you have DirectX 11"). Steam's own windows draw through Direct3D 11 too and came
+// up blank with DXVK on the Mac test, so steam.exe and steamwebhelper.exe always use
+// Wine's built-in Direct3D.
 async function steamGraphics(b) {
+  if (!b.dxvk) {
+    try { await setDxvk(b.id, true); } catch (e) { log(`Couldn’t turn on Faster graphics for Steam games: ${e.message}`, 'warn'); }
+  }
   for (const exe of ['steam.exe', 'steamwebhelper.exe']) {
     const key = `HKCU\\Software\\Wine\\AppDefaults\\${exe}\\DllOverrides`;
     for (const dll of ['d3d11', 'd3d10core', 'd3d10', 'd3d10_1', 'dxgi', 'd3d9']) {
@@ -1185,7 +1190,7 @@ async function doInstallSteam(onProgress) {
 }
 
 module.exports = {
-  steamProgress, deployCefWrapper, engineKind, bottleKind,
+  steamProgress, deployCefWrapper, engineKind, bottleKind, wineRun,
   init, setEngine, getEngine, createBottle, deleteBottle, setWinver, setRetina, launch, runningList, runningIn, creditPlaytime, stop, kill,
   uninstallTarget, splitArgs, prefetchSteamClient, steamNeedsRuntimes, ensureSteamRuntimes,
   tool, driveC, scan, isInstaller, readdSteam, migrateSteamArgs, repairSteam, uninstallInfo, uninstallApp, mainBottle, addWindowsTools, storeStatus, installFromStore, fixCommonProblems, createMacLauncher, installComponent, runWinetricks, setDxvk, addApp, refreshIcons, importSteamGames, updateApp, removeApp, runApp, steamStatus, installSteam, prefixOf, bottle,

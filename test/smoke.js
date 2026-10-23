@@ -90,6 +90,14 @@ app.whenReady().then(async () => {
     } catch (e) { console.log(`WARN: Get Apps link for ${item.name} failed: ${e.message}`); }
   }
 
+  // A Direct3D 11 device and swap chain, the way Unity games start, with Wine's own
+  // Direct3D and then with DXVK.
+  const d3d11 = async (label) => {
+    const code = await runtime.wineRun(b, [path.join(__dirname, 'd3d11test.exe')], { tag: `D3D11 test (${label})` });
+    console.log(`${code === 0 ? 'PASS' : 'WARN'}: Direct3D 11 with ${label} (exit ${code})`);
+  };
+  await d3d11('Wine built-in').catch((e) => console.log(`WARN: D3D11 test failed: ${e.message}`));
+
   // Components and DXVK: reported, not fatal, since they depend on third-party downloads.
   for (const [label, fn] of [
     ['Visual C++ component', () => runtime.installComponent(b.id, 'vcrun', progress())],
@@ -97,6 +105,7 @@ app.whenReady().then(async () => {
   ]) {
     try { await fn(); console.log(`PASS: ${label}`); } catch (e) { console.log(`WARN: ${label} failed: ${e.message}`); }
   }
+  await d3d11('DXVK').catch((e) => console.log(`WARN: D3D11 test failed: ${e.message}`));
 
   // Steam: install it, launch it and report what its own logs say (diagnostic, not fatal).
   if (process.env.STEAM_TEST !== '0') {
