@@ -18,14 +18,17 @@ const LIST = [
       { url: 'https://aka.ms/vs/17/release/vc_redist.x86.exe', file: 'vc_redist.x86.exe', args: ['/install', '/quiet', '/norestart'] },
     ],
   },
-  {
-    id: 'dotnet8',
-    name: '.NET Desktop Runtime 8',
-    desc: 'For apps and launchers built on modern .NET (WPF / WinForms).',
+  // .NET Desktop Runtimes (WPF / WinForms). An app built for one major version needs that
+  // one; Umbra installs it automatically when an app's runtimeconfig.json asks for it.
+  ...[8, 6, 7, 9, 10].map((v) => ({
+    id: `dotnet${v}`,
+    name: `.NET Desktop Runtime ${v}`,
+    desc: `For apps and launchers built on .NET ${v} (WPF / WinForms).`,
+    hidden: v !== 8,
     steps: [
-      { url: 'https://aka.ms/dotnet/8.0/windowsdesktop-runtime-win-x64.exe', file: 'windowsdesktop-runtime-8-x64.exe', args: ['/install', '/quiet', '/norestart'] },
+      { url: `https://aka.ms/dotnet/${v}.0/windowsdesktop-runtime-win-x64.exe`, file: `windowsdesktop-runtime-${v}-x64.exe`, args: ['/install', '/quiet', '/norestart'] },
     ],
-  },
+  })),
   {
     id: 'directx9',
     name: 'DirectX 9 extras (June 2010)',
@@ -120,4 +123,5 @@ async function winetricks(rt, b, verb, onProgress) {
   onProgress(1, `winetricks ${verb} done`);
 }
 
-module.exports = { LIST: LIST.map(({ id, name, desc }) => ({ id, name, desc })), install, winetricks };
+// Hidden ones (other .NET versions) are installed automatically, not offered in the UI.
+module.exports = { LIST: LIST.filter((c) => !c.hidden).map(({ id, name, desc }) => ({ id, name, desc })), ALL: LIST.map(({ id, name }) => ({ id, name })), install, winetricks };

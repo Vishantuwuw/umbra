@@ -457,7 +457,7 @@ handle('app:run', async (id) => {
   // games don't fail with missing-DLL errors and nobody has to click Fix Common Problems.
   const a = store.get().apps.find((x) => x.id === id);
   if (a && runtime.appNeedsRuntimes(a)) {
-    await task(`runtimes:${a.bottleId}`, 'Installing Visual C++ and DirectX (first launch only)', (p) => runtime.ensureAppRuntimes(a, p))
+    await task(`runtimes:${a.bottleId}`, 'Installing what this app needs (first launch only)', (p) => runtime.ensureAppRuntimes(a, p))
       .catch((e) => runtimeLog(`Setting up ${a.name} failed: ${e.message}`, 'warn'));
   }
   return runtime.runApp(id);
@@ -472,7 +472,15 @@ handle('app:launcher', async (id) => {
   shell.showItemInFolder(where);
   return where;
 });
-handle('run:file', (opts) => runtime.launch(opts));
+handle('run:file', async (opts) => {
+  // Same first-launch setup as Library apps, except for installers (they bring their own).
+  const a = { exe: opts.file, bottleId: opts.bottleId, name: path.basename(opts.file) };
+  if (opts.bottleId && !runtime.isInstaller(opts.file) && runtime.appNeedsRuntimes(a)) {
+    await task(`runtimes:${a.bottleId}`, 'Installing what this app needs (first launch only)', (p) => runtime.ensureAppRuntimes(a, p))
+      .catch((e) => runtimeLog(`Setting up ${a.name} failed: ${e.message}`, 'warn'));
+  }
+  return runtime.launch(opts);
+});
 handle('run:stop', (runId) => runtime.stop(runId));
 
 handle('dialog:exe', async () => {

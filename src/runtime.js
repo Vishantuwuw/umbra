@@ -1228,16 +1228,43 @@ const STEAM_GFX = 3;
 // DXMT's bridge is installed into the engine itself, so a new engine needs it again.
 const steamGfxStale = (b) => b.steamGfx !== STEAM_GFX || (process.platform === 'darwin' && b.dxmtEngine !== wine?.path);
 const steamNeedsRuntimes = (bottleId) => missingFor(bottle(bottleId), STEAM_NEEDS).length > 0 || steamGfxStale(bottle(bottleId));
+// Modern .NET apps ship <name>.runtimeconfig.json naming the runtime they need, e.g.
+// Microsoft.WindowsDesktop.App 8.0 for WPF/WinForms. Returns ['dotnet8'] and the like.
+function dotnetNeeds(exe) {
+  let cfg;
+  try { cfg = JSON.parse(fs.readFileSync(exe.replace(/\.exe$/i, '.runtimeconfig.json'), 'utf8')); } catch { return []; }
+  const o = cfg.runtimeOptions || {};
+  const fws = [...(o.frameworks || []), ...(o.framework ? [o.framework] : [])];
+  // Self-contained apps carry their own runtime and list none.
+  const versions = fws.filter((f) => /^Microsoft\.(WindowsDesktop|NETCore)\.App$/i.test(f.name)).map((f) => parseInt(f.version, 10));
+  const v = Math.max(0, ...versions.filter(Number.isFinite));
+  return [6, 7, 8, 9, 10].includes(v) ? [`dotnet${v}`] : [];
+}
+
+// WPF (the .NET UI framework) draws through Direct3D 9 by default, which crashes or shows
+// black windows under Wine; its software renderer works. Set once per bottle.
+const WPF_FIX = 1;
+async function wpfSoftwareRendering(b) {
+  await wineRun(b, ['reg', 'add', 'HKCU\\Software\\Microsoft\\Avalon.Graphics', '/v', 'DisableHWAcceleration', '/t', 'REG_DWORD', '/d', '1', '/f']);
+  b.wpfFix = WPF_FIX;
+  store.save();
+}
+
 const isSteamApp = (a) => /(^|[\\/])steam\.exe$/i.test(a.exe);
 // Windows' own tools (Command Prompt, Task Manager…) don't need anything installed.
 const isWindowsTool = (a) => /[\\/]drive_c[\\/]windows[\\/]/i.test(a.exe);
+const appNeeds = (a) => [...GAME_NEEDS, ...dotnetNeeds(a.exe)];
 function appNeedsRuntimes(a) {
   if (isSteamApp(a)) return steamNeedsRuntimes(a.bottleId);
-  return !isWindowsTool(a) && missingFor(bottle(a.bottleId), GAME_NEEDS).length > 0;
+  const b = bottle(a.bottleId);
+  return !isWindowsTool(a) && (missingFor(b, appNeeds(a)).length > 0 || b.wpfFix !== WPF_FIX);
 }
 async function ensureAppRuntimes(a, onProgress = () => {}) {
   if (isSteamApp(a)) return ensureSteamRuntimes(a.bottleId, onProgress);
-  if (!isWindowsTool(a)) await installMissing(bottle(a.bottleId), GAME_NEEDS, onProgress);
+  if (isWindowsTool(a)) return;
+  const b = bottle(a.bottleId);
+  await installMissing(b, appNeeds(a), onProgress);
+  if (b.wpfFix !== WPF_FIX) await wpfSoftwareRendering(b).catch((e) => log(`Couldn’t set up .NET app drawing: ${e.message}`, 'warn'));
 }
 
 // Games in Steam's bottle get DXMT (see setDxmt): Wine's built-in Direct3D 11 can't start
@@ -1297,6 +1324,6 @@ async function doInstallSteam(onProgress) {
 module.exports = {
   steamProgress, deployCefWrapper, engineKind, bottleKind, wineRun,
   init, setEngine, getEngine, createBottle, deleteBottle, setWinver, setRetina, launch, runningList, runningIn, creditPlaytime, stop, kill,
-  uninstallTarget, splitArgs, prefetchSteamClient, steamNeedsRuntimes, ensureSteamRuntimes, appNeedsRuntimes, ensureAppRuntimes,
+  uninstallTarget, splitArgs, prefetchSteamClient, steamNeedsRuntimes, ensureSteamRuntimes, appNeedsRuntimes, ensureAppRuntimes, dotnetNeeds,
   tool, driveC, scan, isInstaller, readdSteam, migrateSteamArgs, repairSteam, uninstallInfo, uninstallApp, mainBottle, addWindowsTools, storeStatus, installFromStore, fixCommonProblems, createMacLauncher, installComponent, runWinetricks, setDxvk, setDxmt, addApp, refreshIcons, importSteamGames, updateApp, removeApp, runApp, steamStatus, installSteam, prefixOf, bottle,
 };
