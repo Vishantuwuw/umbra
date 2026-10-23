@@ -47,6 +47,11 @@ app.whenReady().then(async () => {
 
   const b = await runtime.createBottle({ name: 'Smoke Test', winver: 'win10' }, progress());
 
+  // Engine sanity check with Wine's error log on, so a broken engine says why.
+  const diag = { WINEDEBUG: 'err+all,warn+module,warn+loaddll' };
+  console.log(`cmd /c ver exit: ${await runtime.wineRun(b, ['cmd', '/c', 'ver'], { env: diag, tag: 'diag cmd' })}`);
+  try { console.log('drive_c:', require('fs').readdirSync(path.join(runtime.prefixOf(b), 'drive_c', 'windows', 'system32')).length, 'files in system32'); } catch (e) { console.log('system32 missing:', e.message); }
+
   // Run an installer; Umbra should add what it installed to the library.
   const installed = new Promise((r) => { onInstalled = r; });
   runtime.launch({ bottleId: b.id, file: path.join(__dirname, 'hello-setup.exe') });
