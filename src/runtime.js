@@ -1205,11 +1205,40 @@ function installSteam(onProgress) {
 
 // Steam won't start without the Visual C++ runtimes ("Steam needs Microsoft Visual C++…"),
 // and its sign-in and store pages use Wine's web engine (Gecko).
-const STEAM_NEEDS = ['vcrun', 'wineaddons'];
+// Installed automatically before the first launch, so nobody has to find Fix Common
+// Problems: Steam and its games need Visual C++ and DirectX (d3dx9 and friends), Steam
+// also needs Wine Mono/Gecko. A component that failed to install isn't retried on every
+// launch (Fix Common Problems still can).
+const STEAM_NEEDS = ['vcrun', 'wineaddons', 'directx9'];
+const GAME_NEEDS = ['vcrun', 'directx9'];
+const missingFor = (b, list) => list.filter((c) => !b.components?.[c] && !b.autoFailed?.[c]);
+async function installMissing(b, list, onProgress) {
+  const todo = missingFor(b, list);
+  for (const [i, c] of todo.entries()) {
+    try {
+      await installComponent(b.id, c, (f, l) => onProgress((i + (f ?? 0)) / todo.length, l));
+    } catch (e) {
+      b.autoFailed = { ...b.autoFailed, [c]: true };
+      store.save();
+      log(`Couldn’t install ${c} automatically: ${e.message}. Try Fix Common Problems in the app’s settings.`, 'warn');
+    }
+  }
+}
 const STEAM_GFX = 3;
 // DXMT's bridge is installed into the engine itself, so a new engine needs it again.
 const steamGfxStale = (b) => b.steamGfx !== STEAM_GFX || (process.platform === 'darwin' && b.dxmtEngine !== wine?.path);
-const steamNeedsRuntimes = (bottleId) => STEAM_NEEDS.some((c) => !bottle(bottleId).components?.[c]) || steamGfxStale(bottle(bottleId));
+const steamNeedsRuntimes = (bottleId) => missingFor(bottle(bottleId), STEAM_NEEDS).length > 0 || steamGfxStale(bottle(bottleId));
+const isSteamApp = (a) => /(^|[\\/])steam\.exe$/i.test(a.exe);
+// Windows' own tools (Command Prompt, Task Manager…) don't need anything installed.
+const isWindowsTool = (a) => /[\\/]drive_c[\\/]windows[\\/]/i.test(a.exe);
+function appNeedsRuntimes(a) {
+  if (isSteamApp(a)) return steamNeedsRuntimes(a.bottleId);
+  return !isWindowsTool(a) && missingFor(bottle(a.bottleId), GAME_NEEDS).length > 0;
+}
+async function ensureAppRuntimes(a, onProgress = () => {}) {
+  if (isSteamApp(a)) return ensureSteamRuntimes(a.bottleId, onProgress);
+  if (!isWindowsTool(a)) await installMissing(bottle(a.bottleId), GAME_NEEDS, onProgress);
+}
 
 // Games in Steam's bottle get DXMT (see setDxmt): Wine's built-in Direct3D 11 can't start
 // Unity and most current games on a Mac ("Failed to initialize graphics... make sure you
@@ -1234,10 +1263,7 @@ async function steamGraphics(b) {
 }
 
 async function ensureSteamRuntimes(bottleId, onProgress = () => {}) {
-  const missing = STEAM_NEEDS.filter((c) => !bottle(bottleId).components?.[c]);
-  for (const [i, c] of missing.entries()) {
-    await installComponent(bottleId, c, (f, l) => onProgress((i + (f ?? 0)) / missing.length, l));
-  }
+  await installMissing(bottle(bottleId), STEAM_NEEDS, onProgress);
   if (steamGfxStale(bottle(bottleId))) await steamGraphics(bottle(bottleId));
 }
 
@@ -1248,7 +1274,7 @@ async function doInstallSteam(onProgress) {
   if (!b) b = await createBottle({ name: 'Default', winver: 'win10' }, (f, label) => onProgress(f * 0.35, label));
   b.steam = true;
   store.save();
-  await ensureSteamRuntimes(b.id, (f, label) => onProgress(0.35 + f * 0.15, label || 'Installing Visual C++ for Steam…'));
+  await ensureSteamRuntimes(b.id, (f, label) => onProgress(0.35 + f * 0.15, label || 'Installing Visual C++ and DirectX for Steam…'));
   const setup = path.join(engine.cacheDir(), 'SteamSetup.exe');
   if (!fs.existsSync(setup)) {
     await engine.download(STEAM_SETUP_URL, setup, (f) => onProgress(0.5 + (f ?? 0) * 0.1, 'Downloading Steam installer…'));
@@ -1271,6 +1297,6 @@ async function doInstallSteam(onProgress) {
 module.exports = {
   steamProgress, deployCefWrapper, engineKind, bottleKind, wineRun,
   init, setEngine, getEngine, createBottle, deleteBottle, setWinver, setRetina, launch, runningList, runningIn, creditPlaytime, stop, kill,
-  uninstallTarget, splitArgs, prefetchSteamClient, steamNeedsRuntimes, ensureSteamRuntimes,
+  uninstallTarget, splitArgs, prefetchSteamClient, steamNeedsRuntimes, ensureSteamRuntimes, appNeedsRuntimes, ensureAppRuntimes,
   tool, driveC, scan, isInstaller, readdSteam, migrateSteamArgs, repairSteam, uninstallInfo, uninstallApp, mainBottle, addWindowsTools, storeStatus, installFromStore, fixCommonProblems, createMacLauncher, installComponent, runWinetricks, setDxvk, setDxmt, addApp, refreshIcons, importSteamGames, updateApp, removeApp, runApp, steamStatus, installSteam, prefixOf, bottle,
 };

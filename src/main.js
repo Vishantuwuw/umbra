@@ -453,10 +453,12 @@ handle('steam:repair', async () => {
   return true;
 });
 handle('app:run', async (id) => {
-  // Steam installed before Umbra added its runtimes shows a Visual C++ error; fix that first.
+  // Visual C++ and DirectX (and Steam's game graphics) go in before the first launch, so
+  // games don't fail with missing-DLL errors and nobody has to click Fix Common Problems.
   const a = store.get().apps.find((x) => x.id === id);
-  if (a && /(^|[\\/])steam\.exe$/i.test(a.exe) && runtime.steamNeedsRuntimes(a.bottleId)) {
-    await task('steam-runtimes', 'Installing Visual C++ for Steam', (p) => runtime.ensureSteamRuntimes(a.bottleId, p));
+  if (a && runtime.appNeedsRuntimes(a)) {
+    await task(`runtimes:${a.bottleId}`, 'Installing Visual C++ and DirectX (first launch only)', (p) => runtime.ensureAppRuntimes(a, p))
+      .catch((e) => runtimeLog(`Setting up ${a.name} failed: ${e.message}`, 'warn'));
   }
   return runtime.runApp(id);
 });
