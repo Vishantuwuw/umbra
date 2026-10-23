@@ -267,6 +267,68 @@ async function setDxvk(bottleId, on, onProgress = () => {}) {
   onProgress(1, 'DXVK enabled');
 }
 
+// DXMT translates Direct3D 10/11 straight to Metal. It's what Wine-based Mac launchers use
+// for current games: Wine's own Direct3D 11 can't start Unity games on a Mac, and
+// DXVK-macOS can't create its DXGI factory on Wine 11 (both fail on the Mac test).
+const DXMT = { version: 'v0.80', url: 'https://github.com/3Shain/dxmt/releases/download/v0.80/dxmt-v0.80-builtin.tar.gz' };
+const DXMT_DLLS = ['d3d11', 'dxgi', 'd3d10core'];
+
+// The release's DLLs are made for Wine's own lib folder. Wine treats a DLL marked
+// "Wine builtin DLL" in system32 as a placeholder for its own copy, so the Direct3D
+// ones get the mark cleared to load as real (native) DLLs from the bottle instead,
+// leaving Wine's own d3d11/dxgi untouched for everything else (Steam's windows).
+function copyAsNative(from, to) {
+  const buf = fs.readFileSync(from);
+  if (buf.toString('latin1', 0x40, 0x50) === 'Wine builtin DLL') buf.fill(0, 0x40, 0x50);
+  fs.writeFileSync(to, buf);
+}
+
+async function setDxmt(bottleId, on, onProgress = () => {}) {
+  const b = bottle(bottleId);
+  const key = 'HKCU\\Software\\Wine\\DllOverrides';
+  if (!on) {
+    for (const dll of DXMT_DLLS) await wineRun(b, ['reg', 'delete', key, '/v', dll, '/f']);
+    b.dxmt = null;
+    store.save();
+    return;
+  }
+  if (b.dxvk) await setDxvk(bottleId, false);
+  const bin = requireEngine();
+  const libDir = findDir(path.dirname(path.dirname(bin)), 'x86_64-unix', 4);
+  if (!libDir) throw new Error('This Wine engine has no x86_64-unix library folder, so DXMT can’t be added');
+  const archive = path.join(engine.cacheDir(), path.basename(DXMT.url));
+  if (!fs.existsSync(archive)) await engine.download(DXMT.url, archive, (f) => onProgress(0.05 + (f ?? 0) * 0.6, `Downloading DXMT ${DXMT.version}…`));
+  onProgress(0.7, 'Installing DXMT…');
+  const tmp = path.join(engine.cacheDir(), 'dxmt-unpack');
+  fs.rmSync(tmp, { recursive: true, force: true });
+  fs.mkdirSync(tmp, { recursive: true });
+  await engine.exec('tar', ['-xf', archive, '-C', tmp]).catch((e) => {
+    fs.rmSync(archive, { force: true });
+    throw new Error(`Could not unpack DXMT, so the download was deleted. Try again. (${e.message})`);
+  });
+  const src = (arch) => findDir(tmp, arch, 3);
+  if (!src('x86_64-unix') || !src('x86_64-windows')) throw new Error('The DXMT download is missing its files');
+  // winemetal is DXMT's bridge between Windows and Metal: its Unix half lives in the engine.
+  const wineLib = path.dirname(libDir);
+  fs.copyFileSync(path.join(src('x86_64-unix'), 'winemetal.so'), path.join(libDir, 'winemetal.so'));
+  const win = path.join(prefixOf(b), 'drive_c', 'windows');
+  for (const [arch, sys] of [['x86_64-windows', 'system32'], ['i386-windows', 'syswow64']]) {
+    const from = src(arch);
+    if (!from) continue;
+    const engineDir = path.join(wineLib, arch);
+    if (fs.existsSync(engineDir)) fs.copyFileSync(path.join(from, 'winemetal.dll'), path.join(engineDir, 'winemetal.dll'));
+    fs.mkdirSync(path.join(win, sys), { recursive: true });
+    fs.copyFileSync(path.join(from, 'winemetal.dll'), path.join(win, sys, 'winemetal.dll'));
+    for (const dll of DXMT_DLLS) if (fs.existsSync(path.join(from, `${dll}.dll`))) copyAsNative(path.join(from, `${dll}.dll`), path.join(win, sys, `${dll}.dll`));
+  }
+  fs.rmSync(tmp, { recursive: true, force: true });
+  for (const dll of DXMT_DLLS) await wineRun(b, ['reg', 'add', key, '/v', dll, '/t', 'REG_SZ', '/d', 'native,builtin', '/f']);
+  b.dxmt = DXMT.version;
+  store.save();
+  log(`DXMT ${DXMT.version} (Direct3D 11 → Metal) enabled in “${b.name}”`);
+  onProgress(1, 'DXMT enabled');
+}
+
 function argsFor(file) {
   const ext = path.extname(file).toLowerCase();
   if (ext === '.msi') return ['msiexec', '/i', file];
@@ -1132,17 +1194,17 @@ function installSteam(onProgress) {
 // Steam won't start without the Visual C++ runtimes ("Steam needs Microsoft Visual C++…"),
 // and its sign-in and store pages use Wine's web engine (Gecko).
 const STEAM_NEEDS = ['vcrun', 'wineaddons'];
-const STEAM_GFX = 2;
+const STEAM_GFX = 3;
 const steamNeedsRuntimes = (bottleId) => STEAM_NEEDS.some((c) => !bottle(bottleId).components?.[c]) || bottle(bottleId).steamGfx !== STEAM_GFX;
 
-// Games in Steam's bottle get DXVK (Faster graphics): Wine's built-in Direct3D 11 can't
-// start Unity and most current games on a Mac ("Failed to initialize graphics... make
-// sure you have DirectX 11"). Steam's own windows draw through Direct3D 11 too and came
-// up blank with DXVK on the Mac test, so steam.exe and steamwebhelper.exe always use
-// Wine's built-in Direct3D.
+// Games in Steam's bottle get DXMT (see setDxmt): Wine's built-in Direct3D 11 can't start
+// Unity and most current games on a Mac ("Failed to initialize graphics... make sure you
+// have DirectX 11"). Steam's own windows draw through Direct3D 11 too and came up blank
+// with DXVK on the Mac test, so steam.exe and steamwebhelper.exe always use Wine's
+// built-in Direct3D.
 async function steamGraphics(b) {
-  if (!b.dxvk) {
-    try { await setDxvk(b.id, true); } catch (e) { log(`Couldn’t turn on Faster graphics for Steam games: ${e.message}`, 'warn'); }
+  if (!b.dxmt) {
+    try { await setDxmt(b.id, true); } catch (e) { log(`Couldn’t turn on DXMT for Steam games: ${e.message}`, 'warn'); }
   }
   for (const exe of ['steam.exe', 'steamwebhelper.exe']) {
     const key = `HKCU\\Software\\Wine\\AppDefaults\\${exe}\\DllOverrides`;
@@ -1193,5 +1255,5 @@ module.exports = {
   steamProgress, deployCefWrapper, engineKind, bottleKind, wineRun,
   init, setEngine, getEngine, createBottle, deleteBottle, setWinver, setRetina, launch, runningList, runningIn, creditPlaytime, stop, kill,
   uninstallTarget, splitArgs, prefetchSteamClient, steamNeedsRuntimes, ensureSteamRuntimes,
-  tool, driveC, scan, isInstaller, readdSteam, migrateSteamArgs, repairSteam, uninstallInfo, uninstallApp, mainBottle, addWindowsTools, storeStatus, installFromStore, fixCommonProblems, createMacLauncher, installComponent, runWinetricks, setDxvk, addApp, refreshIcons, importSteamGames, updateApp, removeApp, runApp, steamStatus, installSteam, prefixOf, bottle,
+  tool, driveC, scan, isInstaller, readdSteam, migrateSteamArgs, repairSteam, uninstallInfo, uninstallApp, mainBottle, addWindowsTools, storeStatus, installFromStore, fixCommonProblems, createMacLauncher, installComponent, runWinetricks, setDxvk, setDxmt, addApp, refreshIcons, importSteamGames, updateApp, removeApp, runApp, steamStatus, installSteam, prefixOf, bottle,
 };

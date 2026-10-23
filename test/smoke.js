@@ -106,6 +106,8 @@ app.whenReady().then(async () => {
     try { await fn(); console.log(`PASS: ${label}`); } catch (e) { console.log(`WARN: ${label} failed: ${e.message}`); }
   }
   await d3d11('DXVK').catch((e) => console.log(`WARN: D3D11 test failed: ${e.message}`));
+  try { await runtime.setDxmt(b.id, true, progress()); console.log('PASS: DXMT installed'); } catch (e) { console.log(`WARN: DXMT failed: ${e.message}`); }
+  await d3d11('DXMT').catch((e) => console.log(`WARN: D3D11 test failed: ${e.message}`));
 
   // Steam: install it, launch it and report what its own logs say (diagnostic, not fatal).
   if (process.env.STEAM_TEST !== '0') {
