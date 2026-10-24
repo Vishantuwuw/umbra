@@ -1,7 +1,7 @@
 {
   "name": "umbra",
   "productName": "Umbra",
-  "version": "1.8.10",
+  "version": "1.8.11",
   "description": "Run Windows apps and games on your Mac.",
   "main": "src/main.js",
   "author": "Vini (coldvini)",
@@ -16,8 +16,10 @@
     "@supabase/supabase-js": "2.118.0"
   },
   "devDependencies": {
+    "@electron/fuses": "1.8.0",
     "electron": "43.0.0",
-    "electron-builder": "26.16.1"
+    "electron-builder": "26.16.1",
+    "javascript-obfuscator": "4.1.1"
   },
   "build": {
     "appId": "app.umbra.launcher",
@@ -30,6 +32,7 @@
     },
     "files": [
       "src/**/*",
+      "!src/bin/*.c",
       "package.json"
     ],
     "afterPack": "build/afterPack.js",

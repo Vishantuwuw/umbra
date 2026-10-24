@@ -83,6 +83,8 @@ jobs:
           else
             echo "::warning::UMBRA_SUPABASE_URL / UMBRA_SUPABASE_ANON_KEY secrets not set; this build has accounts off"
           fi
+      - name: Make the app hard to reverse-engineer
+        run: node build/obfuscate.js
       - run: npm run dist:mac
         env:
           CSC_IDENTITY_AUTO_DISCOVERY: false
@@ -92,6 +94,30 @@ jobs:
             codesign --verify --deep "$app" && echo "signature ok: $app"
             plutil -p "$app/Contents/Info.plist" | grep -E 'CFBundleIdentifier|CFBundleShortVersionString'
           done
+      - name: Launch the packaged app
+        env:
+          UMBRA_HOME: ${{ runner.temp }}/umbra-launch
+        run: |
+          # The release build is obfuscated and has Electron's fuses flipped; make
+          # sure Umbra.app still boots and stays up before we publish it.
+          app=$(ls -d dist/mac-arm64/Umbra.app 2>/dev/null || ls -d dist/mac/Umbra.app)
+          echo "launching $app"
+          "$app/Contents/MacOS/Umbra" & pid=$!
+          sleep 12
+          if kill -0 "$pid" 2>/dev/null; then
+            screencapture -x "$RUNNER_TEMP/launch.png" || true
+            kill "$pid" 2>/dev/null || true
+            echo "app is running"
+          else
+            wait "$pid"; rc=$?
+            echo "::error::Umbra.app exited early (rc=$rc) after obfuscation + fuses"
+            exit 1
+          fi
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: launch-screenshot
+          path: ${{ runner.temp }}/launch.png
       - uses: actions/upload-artifact@v4
         with:
           name: Umbra-mac
