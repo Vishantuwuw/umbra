@@ -1,7 +1,7 @@
 {
   "name": "umbra",
   "productName": "Umbra",
-  "version": "1.8.13",
+  "version": "1.8.14",
   "description": "Run Windows apps and games on your Mac.",
   "main": "src/main.js",
   "author": "Vini (coldvini)",

@@ -945,10 +945,15 @@ window.addEventListener('error', (e) => {
   el.src = next;
 }, true);
 
+let searchTimer = null;
 document.addEventListener('input', (e) => {
   if (e.target.id !== 'search') return;
   query = e.target.value;
-  if (view === 'library') { $('#view').innerHTML = viewLibrary(); }
+  if (view !== 'library') return;
+  // Debounce so holding/typing fast doesn't rebuild the whole library (and re-request
+  // cover art) on every keystroke.
+  clearTimeout(searchTimer);
+  searchTimer = setTimeout(() => { if (view === 'library') $('#view').innerHTML = viewLibrary(); }, 110);
 });
 
 // ---------- drag & drop ----------
@@ -973,7 +978,8 @@ document.addEventListener('keydown', (e) => {
     if (last && !last.classList.contains('wizard')) last.remove();
   }
   if ((e.metaKey || e.ctrlKey) && e.key === 'o') { e.preventDefault(); pickAndRun(); }
-  if ((e.metaKey || e.ctrlKey) && /^[1-5]$/.test(e.key)) go(Object.keys(VIEWS)[+e.key - 1]);
+  // Don't jump views when ⌘1–5 is pressed while typing in a field (e.g. editing an app name).
+  if ((e.metaKey || e.ctrlKey) && /^[1-5]$/.test(e.key) && !/^(INPUT|TEXTAREA|SELECT)$/.test(document.activeElement?.tagName || '')) go(Object.keys(VIEWS)[+e.key - 1]);
   if (e.key === 'Escape' && wizard && wizard.step !== 'progress') closeWizard();
 });
 
