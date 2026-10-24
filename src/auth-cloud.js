@@ -216,12 +216,14 @@ async function handleUrl(url) {
   const hash = new URLSearchParams(u.hash.slice(1));
   const err = params.get('error_description') || hash.get('error_description');
   pending = null;
-  if (err) { error = err.replace(/\+/g, ' '); changed(); return; }
-  if (params.get('type') === 'recovery' || hash.get('type') === 'recovery') recovery = true;
+  if (err) { error = err.replace(/\+/g, ' ').slice(0, 300); changed(); return; }
   const code = params.get('code');
   if (!code) { changed(); return; }
   const { error: e } = await client.auth.exchangeCodeForSession(code);
   error = e ? e.message : null;
+  // Only a reset link that actually signed in asks for a new password. Any web page can
+  // open umbra:// links, so the link's own "type=recovery" isn't trusted on its own.
+  if (!e && (params.get('type') === 'recovery' || hash.get('type') === 'recovery')) recovery = true;
   changed();
 }
 

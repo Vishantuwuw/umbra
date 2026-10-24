@@ -45,7 +45,9 @@ if (process.env.UMBRA_HOME) app.setPath('userData', process.env.UMBRA_HOME);
 // Sign-in links come back from the browser as umbra://auth/callback?code=…
 if (process.defaultApp) app.setAsDefaultProtocolClient('umbra', process.execPath, [path.resolve(process.argv[1] || '.')]);
 else app.setAsDefaultProtocolClient('umbra');
-if (!app.requestSingleInstanceLock()) app.quit();
+// A second copy only hands its arguments to the first one and quits; it must not boot.
+const firstInstance = app.requestSingleInstanceLock();
+if (!firstInstance) app.quit();
 const authUrl = (argv) => argv.find((a) => /^umbra:\/\//i.test(a));
 app.on('open-url', (e, url) => {
   e.preventDefault();
@@ -170,6 +172,8 @@ function createSplash() {
     webPreferences: { preload: path.join(__dirname, 'preload.js') },
   });
   splash.loadFile(path.join(RENDERER, 'splash.html'));
+  splash.webContents.on('will-navigate', (e) => e.preventDefault());
+  splash.webContents.setWindowOpenHandler(() => ({ action: 'deny' }));
   // Closing the splash early (⌘W) shouldn't leave Umbra running with no window.
   splash.on('closed', () => { splash = null; ipcMain.emit('splash:done'); });
   splash.once('ready-to-show', () => splash.show());
@@ -236,10 +240,14 @@ function createMain() {
   });
   main.loadFile(path.join(RENDERER, 'index.html'));
   main.webContents.on('did-finish-load', flushFiles);
+  // Only web links leave the app (in the browser). The window itself never navigates away
+  // from Umbra's own page, since that page has access to everything Umbra can do.
   main.webContents.setWindowOpenHandler(({ url }) => {
-    shell.openExternal(url);
+    if (/^https?:\/\//i.test(url)) shell.openExternal(url);
     return { action: 'deny' };
   });
+  main.webContents.on('will-navigate', (e) => e.preventDefault());
+  main.webContents.on('will-attach-webview', (e) => e.preventDefault());
   main.on('closed', () => { main = null; });
 }
 
@@ -373,8 +381,16 @@ handle('engine:rosetta', async () => {
   cpuInfo = await engine.cpu();
 });
 
-handle('settings:set', (patch) => {
-  Object.assign(store.get().settings, patch);
+// The settings the UI may change. The engine is picked through engine:choose/engine:use,
+// which check that it's a real Wine, so here it can only be reset to automatic.
+const UI_SETTINGS = new Set(['msync', 'esync', 'metalHud', 'verboseLogs']);
+handle('settings:set', (patch = {}) => {
+  const s = store.get().settings;
+  for (const [k, v] of Object.entries(patch)) {
+    if (UI_SETTINGS.has(k)) s[k] = Boolean(v);
+    else if (k === 'enginePath' && v === null) s.enginePath = null;
+    else throw new Error(`Unknown setting ${k}`);
+  }
   store.save();
 });
 
@@ -552,7 +568,7 @@ app.whenReady().then(() => {
   } else {
     Menu.setApplicationMenu(null);
   }
-  boot();
+  if (firstInstance) boot();
 });
 
 app.on('activate', () => {

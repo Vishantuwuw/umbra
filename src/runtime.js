@@ -143,6 +143,13 @@ async function createBottle({ name, winver = 'win10' }, onProgress = () => {}) {
   } finally {
     clearInterval(creep);
   }
+  // wineboot exits 0 even when it couldn't build anything (an engine that can't start
+  // wineboot), and every program would then fail with no explanation.
+  const sys32 = path.join(prefixOf(b), 'drive_c', 'windows', 'system32');
+  if (!fs.existsSync(path.join(sys32, 'kernel32.dll'))) {
+    await deleteBottle(b.id).catch(() => {});
+    throw new Error('The Windows engine couldn’t build a Windows environment. Check the Console, or switch engines in Settings.');
+  }
   onProgress(0.8, `Setting Windows version to ${winver}…`);
   await wineRun(b, ['winecfg', '-v', winver]);
   await waitServer(b);
@@ -627,8 +634,8 @@ function tool(bottleId, name) {
   const tools = { winecfg: 'winecfg', regedit: 'regedit', taskmgr: 'taskmgr', explorer: 'explorer', cmd: 'wineconsole', control: 'control' };
   const b = bottle(bottleId);
   const bin = requireEngine();
+  if (!Object.hasOwn(tools, name)) throw new Error(`Unknown tool ${name}`);
   const args = name === 'cmd' ? ['wineconsole', 'cmd'] : [tools[name]];
-  if (!args[0]) throw new Error(`Unknown tool ${name}`);
   const child = spawn(bin, args, { env: wineEnv(b), cwd: prefixOf(b) });
   pipe(child, `${b.name}:${name}`);
   log(`Opened ${name} in “${b.name}”`);
@@ -863,6 +870,7 @@ function launcherIs(root, bundleId) {
 }
 
 const shq = (v) => `'${String(v).replace(/'/g, `'\\''`)}'`;
+const oneLine = (v) => String(v).replace(/[\r\n\u2028\u2029]+/g, ' ');
 
 // Builds ~/Applications/Umbra/<name>.app, a tiny launcher that starts the app
 // straight through Wine so it shows up in Launchpad, Spotlight and the Dock.
@@ -885,7 +893,8 @@ async function createMacLauncher(id) {
   const keep = ['WINEPREFIX', 'WINEDEBUG', 'WINEDLLOVERRIDES', 'WINEMSYNC', 'WINEESYNC', 'MTL_HUD_ENABLED', 'PATH', 'DYLD_FALLBACK_LIBRARY_PATH', 'CX_ROOT', 'MVK_CONFIG_RESUME_LOST_DEVICE', 'ROSETTA_ADVERTISE_AVX', 'Logging__EventLog__LogLevel__Default'];
   const script = [
     '#!/bin/sh',
-    `# Launches “${a.name}” from the Umbra bottle “${b.name}”.`,
+    // Names are free text: a line break would end the comment and run the rest.
+    `# Launches “${oneLine(a.name)}” from the Umbra bottle “${oneLine(b.name)}”.`,
     ...keep.filter((k) => env[k] !== undefined).map((k) => `export ${k}=${shq(env[k])}`),
     `cd ${shq(path.dirname(a.exe))} || exit 1`,
     ...(/^steam\.exe$/i.test(path.basename(a.exe)) ? [`${shq(bin)} ${shq(path.join(prefixOf(b), 'drive_c', 'umbra', 'winfix.exe'))} >/dev/null 2>&1 &`] : []),

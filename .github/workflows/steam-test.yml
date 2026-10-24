@@ -4,6 +4,11 @@ name: Steam test
 # Steam, once per Wine build flavor so Steam's sign-in can be compared.
 on: workflow_dispatch
 
+# Read-only: the token is passed to the test (for GitHub API rate limits) and so is
+# visible to the Windows programs it runs.
+permissions:
+  contents: read
+
 jobs:
   steam:
     name: Steam on ${{ matrix.flavor }} Wine
@@ -15,6 +20,8 @@ jobs:
     timeout-minutes: 60
     steps:
       - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
       - uses: actions/setup-node@v4
         with:
           node-version: 22

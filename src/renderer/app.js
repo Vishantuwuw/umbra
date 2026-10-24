@@ -124,7 +124,7 @@ function renderNav() {
   $('#nav').innerHTML = Object.entries(VIEWS).filter(([, v]) => !v.hidden?.()).map(([k, v], i) => `
     ${i === 3 ? '<div class="nav-sep"></div><div class="nav-label">Advanced</div>' : ''}
     <button class="nav-item ${v.advanced ? 'small' : ''} ${view === k ? 'active' : ''}" data-nav="${k}">${icon(v.icon)}${v.title}<span class="count">${counts[k] ?? ''}</span></button>`).join('')
-    + (S.bottles.length && S.engine ? `<div class="nav-sep"></div><div class="nav-label">Windows Tools</div>
+    + (usableBottles().length && S.engine ? `<div class="nav-sep"></div><div class="nav-label">Windows Tools</div>
     ${QUICK_TOOLS.map(([tool, label, ic]) => `<button class="nav-item small" data-act="quick-tool" data-tool="${tool}">${icon(ic)}${label}</button>`).join('')}` : '');
 
   const e = S.engine;
@@ -480,12 +480,17 @@ function modal(html, onMount) {
   return close;
 }
 
-// The last-used bottle if it still exists, else the first one.
-const defaultBottleId = () => (S.bottles.some((b) => b.id === S.settings.lastBottleId) ? S.settings.lastBottleId : S.bottles[0]?.id);
-const bottleOptions = (sel) => S.bottles.map((b) => `<option value="${b.id}" ${b.id === sel ? 'selected' : ''}>${esc(b.name)} — ${winverName(b.winver)}</option>`).join('');
+// Bottles built by the current engine; the others can't run anything until setup again.
+const usableBottles = () => S.bottles.filter((b) => (b.engineKind || 'wine') === S.engineKind);
+// The last-used bottle if it still exists and fits the engine, else the first one that does.
+const defaultBottleId = () => {
+  const ok = usableBottles();
+  return (ok.some((b) => b.id === S.settings.lastBottleId) ? S.settings.lastBottleId : ok[0]?.id);
+};
+const bottleOptions = (sel) => usableBottles().map((b) => `<option value="${b.id}" ${b.id === sel ? 'selected' : ''}>${esc(b.name)} — ${winverName(b.winver)}</option>`).join('');
 
 async function ensureBottle() {
-  if (S.bottles.length) return true;
+  if (usableBottles().length) return true;
   if (!S.engine) { openWizard(); return false; }
   toast('Creating your first bottle…');
   await call('bottle:create', { name: 'Default', winver: 'win10' });
@@ -501,7 +506,7 @@ async function runFileFlow(file, presetBottle) {
     <div class="file-box"><div class="fi">${icon(installer ? 'download' : 'file')}</div><div><b>${esc(basename(file))}</b><span>${esc(file)}</span></div></div>
     ${installer ? '' : `<label class="check"><input type="checkbox" id="m-add" checked><div><b>Add to my Library</b><span>So you can open it again with one click</span></div></label>`}
     <details class="more-opts"><summary>More options</summary>
-      ${S.bottles.length > 1 ? `<div class="field"><label>Windows environment</label><select class="input" id="m-bottle">${bottleOptions(def)}</select></div>` : ''}
+      ${usableBottles().length > 1 ? `<div class="field"><label>Windows environment</label><select class="input" id="m-bottle">${bottleOptions(def)}</select></div>` : ''}
       <div class="field"><label>Launch options (optional)</label><input class="input" id="m-args" placeholder="e.g. -windowed"></div>
     </details>
     <div class="modal-actions"><button class="btn ghost" data-close>Cancel</button><button class="btn primary" id="m-go">${icon(installer ? 'download' : 'play')}${installer ? 'Install' : 'Run'}</button></div>`,

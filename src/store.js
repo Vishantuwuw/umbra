@@ -15,6 +15,9 @@ const DEFAULTS = {
   },
 };
 
+// A fresh copy each time: the bottles/apps arrays get pushed to, and must never be shared.
+const defaults = () => JSON.parse(JSON.stringify(DEFAULTS));
+
 let data = null;
 let saveTimer = null;
 
@@ -25,7 +28,8 @@ function file() {
 function read(f) {
   const raw = JSON.parse(fs.readFileSync(f, 'utf8'));
   if (!raw || typeof raw !== 'object' || Array.isArray(raw)) throw new Error('not a settings object');
-  return { ...DEFAULTS, ...raw, settings: { ...DEFAULTS.settings, ...(raw.settings || {}) } };
+  const d = defaults();
+  return { ...d, ...raw, settings: { ...d.settings, ...(raw.settings || {}) } };
 }
 
 // Falls back to the last good copy; a file that can't be read is moved aside
@@ -42,7 +46,7 @@ function load() {
     data = read(`${f}.bak`);
     console.error(`Loaded the backup copy ${f}.bak`);
   } catch {
-    data = JSON.parse(JSON.stringify(DEFAULTS));
+    data = defaults();
   }
   if (fs.existsSync(f)) {
     try { fs.renameSync(f, `${f}.corrupt-${Date.now()}`); } catch (e) { console.error(`Could not move aside ${f}: ${e.message}`); }

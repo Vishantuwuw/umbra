@@ -14,7 +14,11 @@ jobs:
     runs-on: macos-latest
     timeout-minutes: 55
     steps:
+      # The smoke test runs Steam and other Windows programs, so no token is left on disk
+      # (checkout's saved credentials) or in their environment.
       - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
       - uses: actions/setup-node@v4
         with:
           node-version: 22
@@ -26,7 +30,6 @@ jobs:
         env:
           UMBRA_HOME: ${{ runner.temp }}/umbra-home
           SHOTS_DIR: ${{ runner.temp }}
-          GITHUB_TOKEN: ${{ github.token }}
         run: npx electron test/smoke.js
       - name: Screenshot the app UI
         env:

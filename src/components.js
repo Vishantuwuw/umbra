@@ -6,7 +6,10 @@ const { spawn } = require('child_process');
 const engine = require('./engine');
 const store = require('./store');
 
-const WINETRICKS_URL = 'https://raw.githubusercontent.com/Winetricks/winetricks/master/src/winetricks';
+// A released version, not master: the script runs as a shell script on the Mac, so a
+// change pushed to winetricks shouldn't reach Umbra unreviewed.
+const WINETRICKS_VERSION = '20260125';
+const WINETRICKS_URL = `https://raw.githubusercontent.com/Winetricks/winetricks/${WINETRICKS_VERSION}/src/winetricks`;
 
 const LIST = [
   {
@@ -103,7 +106,7 @@ async function install(rt, b, id, onProgress) {
 // Runs a winetricks verb for anything not in the list above.
 async function winetricks(rt, b, verb, onProgress) {
   if (!/^[a-z0-9_=.-]+( [a-z0-9_=.-]+)*$/i.test(verb)) throw new Error('Enter winetricks verbs like: corefonts d3dcompiler_47');
-  const script = cacheFile('winetricks');
+  const script = cacheFile(`winetricks-${WINETRICKS_VERSION}`);
   if (!fs.existsSync(script)) {
     await engine.download(WINETRICKS_URL, script, () => onProgress(0.05, 'Downloading winetricks…'));
     fs.chmodSync(script, 0o755);
