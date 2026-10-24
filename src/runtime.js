@@ -294,6 +294,18 @@ function copyAsNative(from, to) {
   fs.writeFileSync(to, buf);
 }
 
+// Identifies the exact engine build DXMT was set up against. DXMT's Mac-side half
+// (winemetal.so) lives inside the engine, so reinstalling or switching the engine must
+// re-apply it — otherwise the engine's half and the bottle's winemetal.dll drift out of
+// sync and games (and Steam) crash with "unimplemented function winemetal.dll.…". The
+// engine binary's mtime changes on a reinstall, so it's part of the stamp.
+function dxmtStamp() {
+  if (!wine?.path) return null;
+  let m = 0;
+  try { m = Math.round(fs.statSync(wine.path).mtimeMs); } catch {}
+  return `${wine.path}:${m}`;
+}
+
 // source: 'release' (DXMT's own build), 'bundled' (the one Sikarugir ships next to its
 // engine, in Frameworks/renderer/dxmt) or 'auto' (bundled when the engine has it).
 async function setDxmt(bottleId, on, onProgress = () => {}, { source = 'auto' } = {}) {
@@ -346,7 +358,7 @@ async function setDxmt(bottleId, on, onProgress = () => {}, { source = 'auto' } 
   fs.rmSync(tmp, { recursive: true, force: true });
   for (const dll of DXMT_DLLS) await wineRun(b, ['reg', 'add', key, '/v', dll, '/t', 'REG_SZ', '/d', 'native,builtin', '/f']);
   b.dxmt = version;
-  b.dxmtEngine = wine?.path;
+  b.dxmtEngine = dxmtStamp();
   store.save();
   log(`DXMT ${version} (Direct3D 11 → Metal) enabled in “${b.name}”`);
   onProgress(1, 'DXMT enabled');
@@ -1073,8 +1085,14 @@ async function repairSteam(onProgress = () => {}) {
   const id = readdSteam();
   const a = store.get().apps.find((x) => x.id === id);
   if (OLD_STEAM_ARGS.includes(a.args) || !a.args) a.args = STEAM_ARGS;
+  // Re-apply Steam's graphics setup too: DXMT's winemetal lives in the engine and can fall
+  // out of sync with the bottle (e.g. after an engine reinstall), which crashes Steam with
+  // "unimplemented function winemetal.dll.…". Force it to run again.
+  b.steamGfx = null;
+  b.dxmtEngine = null;
   store.save();
-  log('Steam repaired: cleared its package and web caches. Relaunching — it will re-download its update.');
+  await ensureSteamRuntimes(b.id, onProgress).catch((e) => log(`Couldn’t re-apply Steam graphics: ${e.message}`, 'warn'));
+  log('Steam repaired: cleared its caches and re-synced its graphics. Relaunching — it will re-download its update.');
   return launch({ bottleId: b.id, file: a.exe, args: a.args, appId: a.id, name: 'Steam' });
 }
 
@@ -1251,7 +1269,7 @@ async function installMissing(b, list, onProgress) {
 }
 const STEAM_GFX = 4;
 // DXMT's bridge is installed into the engine itself, so a new engine needs it again.
-const steamGfxStale = (b) => b.steamGfx !== STEAM_GFX || (process.platform === 'darwin' && b.dxmtEngine !== wine?.path);
+const steamGfxStale = (b) => b.steamGfx !== STEAM_GFX || (process.platform === 'darwin' && b.dxmtEngine !== dxmtStamp());
 const steamNeedsRuntimes = (bottleId) => missingFor(bottle(bottleId), STEAM_NEEDS).length > 0 || steamGfxStale(bottle(bottleId));
 // Modern .NET apps ship <name>.runtimeconfig.json naming the runtime they need, e.g.
 // Microsoft.WindowsDesktop.App 8.0 for WPF/WinForms. Returns ['dotnet8'] and the like.
@@ -1298,9 +1316,9 @@ async function ensureAppRuntimes(a, onProgress = () => {}) {
 // with DXVK on the Mac test, so steam.exe and steamwebhelper.exe always use Wine's
 // built-in Direct3D.
 async function steamGraphics(b) {
-  if (process.platform === 'darwin' && b.dxmtEngine !== wine?.path) {
+  if (process.platform === 'darwin' && b.dxmtEngine !== dxmtStamp()) {
     try { await setDxmt(b.id, true); } catch (e) {
-      b.dxmtEngine = wine?.path; // don't retry on every launch
+      b.dxmtEngine = dxmtStamp(); // don't retry on every launch
       log(`Couldn’t turn on DXMT for Steam games: ${e.message}`, 'warn');
     }
   }
