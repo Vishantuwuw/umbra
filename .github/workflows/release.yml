@@ -8,6 +8,12 @@ on:
 permissions:
   contents: write
 
+# A newer push replaces a run that's still testing, so two releases never race to
+# publish (an older one finishing last would become "latest").
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   smoke:
     name: Run a Windows .exe on macOS
@@ -104,11 +110,15 @@ jobs:
           sed -e "s#{{REPO}}#$GITHUB_REPOSITORY#g" -e "s#{{SHA}}#$GITHUB_SHA#g" .github/release-notes.md > "$RUNNER_TEMP/notes.md"
           git tag -f "$TAG" "$GITHUB_SHA"
           git push -f origin "refs/tags/$TAG"
+          # Only the highest version is marked latest (Umbra's update check reads it).
+          git fetch -q --tags origin
+          HIGHEST=$(git tag -l 'v*' | sort -V | tail -1)
+          LATEST=false; [ "$HIGHEST" = "$TAG" ] && LATEST=true
           if gh release view "$TAG" >/dev/null 2>&1; then
-            gh release edit "$TAG" --title "Umbra $TAG" --notes-file "$RUNNER_TEMP/notes.md"
+            gh release edit "$TAG" --title "Umbra $TAG" --notes-file "$RUNNER_TEMP/notes.md" --latest=$LATEST
             gh release upload "$TAG" dist/*.dmg dist/*.zip --clobber
           else
-            gh release create "$TAG" dist/*.dmg dist/*.zip --verify-tag --latest \
+            gh release create "$TAG" dist/*.dmg dist/*.zip --verify-tag --latest=$LATEST \
               --title "Umbra $TAG" --notes-file "$RUNNER_TEMP/notes.md"
           fi
       - name: Keep screenshots out of releases
