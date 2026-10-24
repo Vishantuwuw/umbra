@@ -25,7 +25,10 @@ function readManifest(file) {
 function manifests(steamapps) {
   let files = [];
   try { files = fs.readdirSync(steamapps).filter((f) => /^appmanifest_\d+\.acf$/.test(f)); } catch {}
-  return files.map((f) => readManifest(path.join(steamapps, f))).filter((m) => m && m.installdir && !NOT_GAMES.has(m.appid));
+  // installdir is a folder name under steamapps/common; anything with a path in it is
+  // ignored, since uninstalling a game deletes that folder.
+  return files.map((f) => readManifest(path.join(steamapps, f)))
+    .filter((m) => m && m.installdir && !/[\\/]|^\.\.?$/.test(m.installdir) && !NOT_GAMES.has(m.appid));
 }
 
 // Steam game info for an exe that lives under steamapps/common/<game>/.
@@ -79,7 +82,7 @@ function parseKeyValues(txt) {
   }
   let i = 0;
   const block = () => {
-    const obj = {};
+    const obj = Object.create(null); // keys like "__proto__" stay plain keys
     while (i < tokens.length) {
       const key = tokens[i++];
       if (key === '}') return obj;

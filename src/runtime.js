@@ -1119,8 +1119,8 @@ function holdsOthers(dir, next, exe) {
 // deeper past publisher folders (Epic Games, Rockstar Games, Ubisoft/…/games) that
 // also hold other programs, but not into the program's own bin/x64 folders.
 function uninstallTarget(exe) {
-  const steam = exe.match(/^(.*[\\/]steamapps[\\/]common[\\/][^\\/]+)[\\/]/i);
-  if (steam) return steam[1];
+  const steam = exe.match(/^(.*[\\/]steamapps[\\/]common[\\/]([^\\/]+))[\\/]/i);
+  if (steam) return /^\.\.?$/.test(steam[2]) ? null : steam[1];
   const m = exe.match(/^(.*[\\/]drive_c[\\/](?:Program Files(?: \(x86\))?|Games|GOG Games))[\\/]([^\\/]+)[\\/]/i)
     || exe.match(/^(.*[\\/]AppData[\\/]Local[\\/]Programs)[\\/]([^\\/]+)[\\/]/i);
   if (!m) return null;

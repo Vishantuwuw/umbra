@@ -324,7 +324,11 @@ async function installBundle(eng, dir, label, onProgress) {
     throw new Error(`Could not unpack ${label}, so the download was deleted. Try again. (${e.message})`);
   }
   await exec('/usr/bin/xattr', ['-dr', 'com.apple.quarantine', staging]).catch(() => {});
-  if (!pickInBin(path.join(staging, 'wine', 'bin'))) throw new Error(`The ${label} download did not contain Wine`);
+  if (!pickInBin(path.join(staging, 'wine', 'bin'))) {
+    fs.rmSync(staging, { recursive: true, force: true });
+    fs.rmSync(engineTar, { force: true });
+    throw new Error(`The ${label} download did not contain Wine`);
+  }
   fs.rmSync(dir, { recursive: true, force: true });
   fs.renameSync(staging, dir);
   fs.rmSync(engineTar, { force: true });
@@ -362,6 +366,7 @@ async function doInstall(onProgress) {
   await exec('/usr/bin/xattr', ['-dr', 'com.apple.quarantine', staging]).catch(() => {});
   if (!findWineIn(staging)) {
     fs.rmSync(archive, { force: true });
+    fs.rmSync(staging, { recursive: true, force: true });
     throw new Error('The downloaded engine did not contain a Wine binary');
   }
   fs.rmSync(dir, { recursive: true, force: true });
